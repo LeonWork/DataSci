@@ -55,8 +55,8 @@ DataSci/
 
 | Week | Focus | Status |
 |------|-------|--------|
-| 1 | EDA & Data Quality | 🔄 In Progress |
-| 2 | Feature Engineering & Data Pipeline | ⏳ Upcoming |
+| 1 | EDA & Data Quality | ✅ Complete |
+| 2 | Feature Engineering & Data Pipeline | 🔄 In Progress |
 | 3 | Model Development & Experiment Tracking | ⏳ Upcoming |
 | 4 | Model Interpretation & Hyperparameter Tuning | ⏳ Upcoming |
 | 5 | FastAPI + Docker Deployment | ⏳ Upcoming |
