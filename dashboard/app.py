@@ -227,7 +227,9 @@ def make_gauge(prob: float, risk: str) -> go.Figure:
 def make_factor_chart(factors: list[dict]) -> go.Figure:
     if not factors:
         return None
-    names = [f["feature"].replace("_", " ")[:30] for f in factors]
+    
+    # Feature name cleanup and better truncation
+    names = [f["feature"].replace("_", " ").title() for f in factors]
     vals  = [f["value"] for f in factors]
     colors = ["#ef4444" if v > 0 else "#10b981" for v in vals]
 
@@ -239,25 +241,34 @@ def make_factor_chart(factors: list[dict]) -> go.Figure:
         marker_line_width=0,
         text=[f"{v:+.3f}" for v in vals],
         textposition="outside",
-        textfont={"color": "#c9d1d9", "size": 11},
+        textfont={"color": "#c9d1d9", "size": 12, "family": "Inter"},
+        cliponaxis=False,
     ))
+
+    # Calculate x-axis range to prevent label cutoff
+    max_val = max([abs(v) for v in vals]) if vals else 1
+    x_range = [-max_val * 1.3, max_val * 1.3]
+
     fig.update_layout(
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
-        margin=dict(t=10, b=10, l=160, r=80),
-        height=max(220, len(factors) * 42),
+        margin=dict(t=10, b=10, l=180, r=100), # Increased margins significantly
+        height=max(300, len(factors) * 45),    # Increased bar height
         xaxis=dict(
             showgrid=True,
             gridcolor="rgba(48,54,61,0.5)",
             zeroline=True,
             zerolinecolor="rgba(139,92,246,0.4)",
-            tickfont={"color": "#8b949e"},
-            title=dict(text="SHAP Impact on Churn Probability", font={"color": "#8b949e", "size": 11}),
+            tickfont={"color": "#8b949e", "size": 11},
+            title=dict(text="SHAP Impact on Churn Probability", font={"color": "#8b949e", "size": 12}),
+            range=x_range,
         ),
         yaxis=dict(
-            tickfont={"color": "#c9d1d9", "size": 11},
+            tickfont={"color": "#c9d1d9", "size": 12},
             autorange="reversed",
         ),
+        bargap=0.3,
+        showlegend=False,
     )
     return fig
 
@@ -593,14 +604,23 @@ def main():
                 "top_factor_3": factors[2]["feature"] if len(factors) > 2 else "",
                 "recommendations": " | ".join(recos),
             }])
-            dl1, dl2, _ = st.columns([1, 1, 2])
+            dl1, dl2, _ = st.columns([1, 1, 1.5]) # Slightly better spacing
             with dl1:
-                st.download_button("⬇️ Download CSV", export_df.to_csv(index=False),
-                                   "churnguard_prediction.csv", "text/csv", use_container_width=True)
+                st.download_button(
+                    label="⬇️ CSV Report",
+                    data=export_df.to_csv(index=False),
+                    file_name="churnguard_prediction.csv",
+                    mime="text/csv",
+                    use_container_width=True
+                )
             with dl2:
-                st.download_button("⬇️ Download JSON", _json.dumps(export_data, indent=2),
-                                   "churnguard_prediction.json", "application/json", use_container_width=True)
-
+                st.download_button(
+                    label="⬇️ JSON Report",
+                    data=_json.dumps(export_data, indent=2),
+                    file_name="churnguard_prediction.json",
+                    mime="application/json",
+                    use_container_width=True
+                )
         else:
             st.info("👈 **Fill in the customer profile** in the sidebar, then click **Analyse Churn Risk** — or use the demo presets (🔴 High Risk / 🟢 Low Risk).")
             c1, c2, c3 = st.columns(3)
