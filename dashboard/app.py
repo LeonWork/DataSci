@@ -244,8 +244,8 @@ def make_factor_chart(factors: list[dict]) -> go.Figure:
     fig.update_layout(
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
-        margin=dict(t=10, b=10, l=0, r=60),
-        height=max(220, len(factors) * 36),
+        margin=dict(t=10, b=10, l=160, r=80),
+        height=max(220, len(factors) * 42),
         xaxis=dict(
             showgrid=True,
             gridcolor="rgba(48,54,61,0.5)",
@@ -372,6 +372,125 @@ def sidebar_form() -> dict:
         }
 
 
+# ── Batch analysis ───────────────────────────────────────────────────────────
+
+BATCH_REQUIRED_COLS = [
+    "gender", "SeniorCitizen", "Partner", "Dependents", "tenure",
+    "PhoneService", "MultipleLines", "InternetService", "OnlineSecurity",
+    "OnlineBackup", "DeviceProtection", "TechSupport", "StreamingTV",
+    "StreamingMovies", "Contract", "PaperlessBilling", "PaymentMethod",
+    "MonthlyCharges", "TotalCharges",
+]
+
+def batch_tab(model, pipeline, feature_names: list, train_metrics: dict):
+    st.markdown('<p class="section-title">📂 Batch Customer Analysis</p>', unsafe_allow_html=True)
+    st.write(
+        "Upload a CSV containing multiple customer records. "
+        "ChurnGuard AI will score every row and return a ranked risk table."
+    )
+
+    # Template download
+    template_df = pd.DataFrame([HIGH_RISK_PRESET, LOW_RISK_PRESET])
+    template_df.insert(0, "customerID", ["CUST-001", "CUST-002"])
+    st.download_button(
+        "⬇️ Download CSV Template",
+        data=template_df.to_csv(index=False),
+        file_name="churnguard_template.csv",
+        mime="text/csv",
+    )
+
+    uploaded = st.file_uploader("Upload customer CSV", type=["csv"])
+    if uploaded is None:
+        st.info("👆 Upload a CSV to begin batch scoring.")
+        return
+
+    raw = pd.read_csv(uploaded)
+    missing = [c for c in BATCH_REQUIRED_COLS if c not in raw.columns]
+    if missing:
+        st.error(f"CSV is missing required columns: {missing}")
+        return
+
+    st.success(f"✅ Loaded **{len(raw):,}** customer records.")
+
+    with st.spinner(f"Scoring {len(raw):,} customers…"):
+        results = []
+        for _, row in raw.iterrows():
+            cust = row.to_dict()
+            cust.setdefault("customerID", "UNKNOWN")
+            try:
+                prob, factors = run_prediction(cust, model, pipeline, feature_names)
+                risk = "High" if prob >= 0.65 else ("Medium" if prob >= 0.30 else "Low")
+                top = factors[0]["feature"] if factors else ""
+                results.append({
+                    "customerID": cust.get("customerID", ""),
+                    "churn_probability_pct": round(prob * 100, 1),
+                    "risk_tier": risk,
+                    "top_driver": top,
+                    "tenure": cust.get("tenure"),
+                    "contract": cust.get("Contract"),
+                    "monthly_charges": cust.get("MonthlyCharges"),
+                })
+            except Exception:
+                pass
+
+    results_df = pd.DataFrame(results).sort_values("churn_probability_pct", ascending=False)
+
+    # KPI strip
+    n_high   = (results_df["risk_tier"] == "High").sum()
+    n_medium = (results_df["risk_tier"] == "Medium").sum()
+    n_low    = (results_df["risk_tier"] == "Low").sum()
+    avg_prob = results_df["churn_probability_pct"].mean()
+
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("🔴 High Risk",   f"{n_high:,}",   f"{n_high/len(results_df)*100:.0f}% of base")
+    k2.metric("🟡 Medium Risk", f"{n_medium:,}", f"{n_medium/len(results_df)*100:.0f}% of base")
+    k3.metric("🟢 Low Risk",    f"{n_low:,}",    f"{n_low/len(results_df)*100:.0f}% of base")
+    k4.metric("Avg Churn Prob", f"{avg_prob:.1f}%")
+
+    # Distribution histogram
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown('<p class="section-title">📊 Risk Score Distribution</p>', unsafe_allow_html=True)
+    hist_colors = [
+        "#10b981" if p < 30 else ("#f59e0b" if p < 65 else "#ef4444")
+        for p in results_df["churn_probability_pct"]
+    ]
+    fig_hist = go.Figure(go.Histogram(
+        x=results_df["churn_probability_pct"],
+        nbinsx=20,
+        marker_color="#667eea",
+        marker_line_width=0,
+        opacity=0.85,
+    ))
+    fig_hist.add_vrect(x0=0,  x1=30, fillcolor="rgba(16,185,129,0.07)",  line_width=0)
+    fig_hist.add_vrect(x0=30, x1=65, fillcolor="rgba(245,158,11,0.07)",  line_width=0)
+    fig_hist.add_vrect(x0=65, x1=100,fillcolor="rgba(239,68,68,0.07)",   line_width=0)
+    fig_hist.update_layout(
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        height=260, margin=dict(t=10,b=10,l=10,r=10),
+        xaxis=dict(title="Churn Probability (%)", tickfont={"color":"#8b949e"}, gridcolor="rgba(48,54,61,0.5)"),
+        yaxis=dict(title="# Customers", tickfont={"color":"#8b949e"}, gridcolor="rgba(48,54,61,0.5)"),
+    )
+    st.plotly_chart(fig_hist, use_container_width=True, config={"displayModeBar": False})
+
+    # Ranked table
+    st.markdown('<p class="section-title">🏷️ Ranked Customer Risk Table</p>', unsafe_allow_html=True)
+    def color_risk(val):
+        c = {"High": "#ef4444", "Medium": "#f59e0b", "Low": "#10b981"}.get(val, "")
+        return f"color: {c}; font-weight:600"
+    styled = results_df.style.applymap(color_risk, subset=["risk_tier"])
+    st.dataframe(styled, use_container_width=True, height=400)
+
+    # Bulk export
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.download_button(
+        "⬇️ Download Scored Results (CSV)",
+        data=results_df.to_csv(index=False),
+        file_name="churnguard_batch_results.csv",
+        mime="text/csv",
+        use_container_width=False,
+    )
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
@@ -389,91 +508,155 @@ def main():
         )
         st.stop()
 
-    # Sidebar form
-    customer = sidebar_form()
+    tab_single, tab_batch = st.tabs(["🔮 Single Customer", "📂 Batch Analysis"])
 
-    # Predict button
+    # Sidebar (outside tabs — Streamlit sidebars are global)
+    customer = sidebar_form()
     with st.sidebar:
         st.divider()
         predict_btn = st.button("🔮 Analyse Churn Risk", use_container_width=True, type="primary")
-
-    # Auto-predict on preset change
     auto_predict = "preset" in st.session_state
 
-    if predict_btn or auto_predict:
-        with st.spinner("Analysing…"):
-            prob, factors = run_prediction(customer, model, pipeline, feature_names)
+    with tab_batch:
+        batch_tab(model, pipeline, feature_names, train_metrics)
 
-        risk = "High" if prob >= 0.65 else ("Medium" if prob >= 0.30 else "Low")
-        risk_colors = {"High": "#ef4444", "Medium": "#f59e0b", "Low": "#10b981"}
-        risk_emoji  = {"High": "🔴", "Medium": "🟡", "Low": "🟢"}
+    with tab_single:
+        if predict_btn or auto_predict:
+            with st.spinner("Analysing…"):
+                prob, factors = run_prediction(customer, model, pipeline, feature_names)
 
-        # ── Layout ────────────────────────────────────────────────────────
-        col_gauge, col_detail = st.columns([1, 1.6], gap="large")
+            risk = "High" if prob >= 0.65 else ("Medium" if prob >= 0.30 else "Low")
+            risk_emoji = {"High": "🔴", "Medium": "🟡", "Low": "🟢"}
 
-        with col_gauge:
-            st.markdown(f'<p class="section-title">Churn Probability</p>', unsafe_allow_html=True)
-            st.plotly_chart(make_gauge(prob, risk), use_container_width=True, config={"displayModeBar": False})
+            col_gauge, col_detail = st.columns([1, 1.6], gap="large")
 
-            badge_class = f"risk-badge-{risk.lower()}"
-            st.markdown(
-                f'<div style="text-align:center; margin-top:-10px;">'
-                f'<span class="{badge_class}">{risk_emoji[risk]} {risk} Risk</span>'
-                f'</div>',
-                unsafe_allow_html=True,
-            )
+            with col_gauge:
+                st.markdown('<p class="section-title">Churn Probability</p>', unsafe_allow_html=True)
+                st.plotly_chart(make_gauge(prob, risk), use_container_width=True, config={"displayModeBar": False})
+                badge_class = f"risk-badge-{risk.lower()}"
+                st.markdown(
+                    f'<div style="text-align:center;margin-top:-10px;">'
+                    f'<span class="{badge_class}">{risk_emoji[risk]} {risk} Risk</span></div>',
+                    unsafe_allow_html=True,
+                )
+                st.markdown("<br>", unsafe_allow_html=True)
+                recos = get_recommendations(customer, risk)
+                st.markdown('<p class="section-title">💡 Recommended Actions</p>', unsafe_allow_html=True)
+                st.markdown('<div class="reco-card">', unsafe_allow_html=True)
+                for r in recos:
+                    st.markdown(f'<p class="reco-item">{r}</p>', unsafe_allow_html=True)
+                st.markdown('</div>', unsafe_allow_html=True)
+
+            with col_detail:
+                st.markdown('<p class="section-title">Feature Impact (SHAP)</p>', unsafe_allow_html=True)
+                if factors:
+                    st.plotly_chart(make_factor_chart(factors), use_container_width=True, config={"displayModeBar": False})
+                    st.caption("🔴 Red bars push toward churn · 🟢 Green bars reduce churn risk")
+                else:
+                    st.info("SHAP values unavailable.")
+
+                st.markdown("<br>", unsafe_allow_html=True)
+                st.markdown('<p class="section-title">📊 Model Performance</p>', unsafe_allow_html=True)
+                m1, m2, m3, m4 = st.columns(4)
+                m1.metric("AUC",       f"{train_metrics.get('roc_auc', 0):.3f}")
+                m2.metric("F1",        f"{train_metrics.get('f1', 0):.3f}")
+                m3.metric("Precision", f"{train_metrics.get('precision', 0):.3f}")
+                m4.metric("Recall",    f"{train_metrics.get('recall', 0):.3f}")
+                st.caption(
+                    "**AUC** = ability to rank churners above non-churners (1.0 = perfect, 0.5 = random). "
+                    "**F1** = balance of precision and recall. "
+                    "Industry baseline AUC for telco churn: ~0.70–0.80."
+                )
+
+            with st.expander("📋 Full Customer Profile", expanded=False):
+                display = {k: v for k, v in customer.items() if k != "customerID"}
+                st.dataframe(pd.DataFrame([display]).T.rename(columns={0: "Value"}), use_container_width=True)
+
+            # Export
+            import json as _json
+            st.markdown("<br>", unsafe_allow_html=True)
+            st.markdown('<p class="section-title">📥 Export Prediction Report</p>', unsafe_allow_html=True)
+            export_data = {
+                "customer_profile": {k: v for k, v in customer.items() if k != "customerID"},
+                "churn_probability_pct": round(prob * 100, 2),
+                "risk_tier": risk,
+                "top_shap_factors": factors[:5],
+                "recommended_actions": recos,
+                "model_performance": train_metrics,
+            }
+            export_df = pd.DataFrame([{
+                **{k: v for k, v in customer.items() if k != "customerID"},
+                "churn_probability_pct": round(prob * 100, 2),
+                "risk_tier": risk,
+                "top_factor_1": factors[0]["feature"] if len(factors) > 0 else "",
+                "top_factor_2": factors[1]["feature"] if len(factors) > 1 else "",
+                "top_factor_3": factors[2]["feature"] if len(factors) > 2 else "",
+                "recommendations": " | ".join(recos),
+            }])
+            dl1, dl2, _ = st.columns([1, 1, 2])
+            with dl1:
+                st.download_button("⬇️ Download CSV", export_df.to_csv(index=False),
+                                   "churnguard_prediction.csv", "text/csv", use_container_width=True)
+            with dl2:
+                st.download_button("⬇️ Download JSON", _json.dumps(export_data, indent=2),
+                                   "churnguard_prediction.json", "application/json", use_container_width=True)
+
+        else:
+            st.info("👈 **Fill in the customer profile** in the sidebar, then click **Analyse Churn Risk** — or use the demo presets (🔴 High Risk / 🟢 Low Risk).")
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Model", "XGBoost", "Tuned")
+            c2.metric("Dataset", "IBM Telco", "7,043 customers")
+            c3.metric("Features", "30+", "Engineered")
 
             st.markdown("<br>", unsafe_allow_html=True)
-            recos = get_recommendations(customer, risk)
-            st.markdown('<p class="section-title">💡 Recommended Actions</p>', unsafe_allow_html=True)
-            st.markdown('<div class="reco-card">', unsafe_allow_html=True)
-            for r in recos:
-                st.markdown(f'<p class="reco-item">{r}</p>', unsafe_allow_html=True)
-            st.markdown('</div>', unsafe_allow_html=True)
+            with st.expander("📖 How to Use ChurnGuard AI", expanded=True):
+                st.markdown("""
+### Getting Started in 3 Steps
 
-        with col_detail:
-            st.markdown('<p class="section-title">Feature Impact (SHAP)</p>', unsafe_allow_html=True)
-            if factors:
-                fig = make_factor_chart(factors)
-                st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
-                st.caption("🔴 Red bars push toward churn · 🟢 Green bars reduce churn risk")
-            else:
-                st.info("SHAP values unavailable.")
+**Step 1 — Enter a Customer Profile**
+Use the sidebar on the left to fill in a customer's details:
+- **Demographics**: Gender, senior citizen status, partner, dependents.
+- **Account**: Tenure, contract type, billing method, payment method.
+- **Services**: Phone, internet, streaming, security, support add-ons.
+- **Charges**: Monthly and total charges billed to date.
 
-            # Model metrics strip
-            st.markdown("<br>", unsafe_allow_html=True)
-            st.markdown('<p class="section-title">📊 Model Performance</p>', unsafe_allow_html=True)
-            m1, m2, m3, m4 = st.columns(4)
-            m1.metric("AUC",       f"{train_metrics.get('roc_auc', 0):.3f}")
-            m2.metric("F1",        f"{train_metrics.get('f1', 0):.3f}")
-            m3.metric("Precision", f"{train_metrics.get('precision', 0):.3f}")
-            m4.metric("Recall",    f"{train_metrics.get('recall', 0):.3f}")
+> 💡 **Tip:** Use the **🔴 High Risk** or **🟢 Low Risk** preset buttons to instantly load a demo customer.
 
-        # Customer summary table
-        with st.expander("📋 Full Customer Profile", expanded=False):
-            display = {k: v for k, v in customer.items() if k != "customerID"}
-            st.dataframe(
-                pd.DataFrame([display]).T.rename(columns={0: "Value"}),
-                use_container_width=True,
-            )
+---
 
-    else:
-        # Landing state
-        st.info(
-            "👈 **Fill in the customer profile** in the sidebar, then click "
-            "**Analyse Churn Risk** — or use the demo presets (🔴 High Risk / 🟢 Low Risk)."
-        )
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Model", "XGBoost", "Tuned")
-        c2.metric("Dataset", "IBM Telco", "7,043 customers")
-        c3.metric("Features", "30+", "Engineered")
+**Step 2 — Run the Analysis**
+Click **🔮 Analyse Churn Risk** in the sidebar. The model will:
+1. Preprocess and engineer features from the profile.
+2. Run an XGBoost classifier trained on 7,043 IBM Telco customers.
+3. Return a **Churn Probability (0–100%)** and assign a **Risk Tier**.
+
+| Risk Tier | Probability | Meaning |
+|-----------|-------------|---------|
+| 🟢 **Low** | < 30% | Customer is stable. Low intervention needed. |
+| 🟡 **Medium** | 30–65% | Early churn signals. Engage proactively. |
+| 🔴 **High** | ≥ 65% | Significant risk. Immediate action recommended. |
+
+---
+
+**Step 3 — Interpret the Results**
+
+- **Gauge** — Exact churn probability, colour-coded by risk tier.
+- **SHAP Chart** — 🔴 Red = churn driver · 🟢 Green = protective factor. Longer bar = stronger influence.
+- **Recommended Actions** — CRM-ready retention steps tailored to this customer.
+- **Export** — Download CSV or JSON to share with your team.
+- **Batch Analysis tab** — Upload a CSV to score hundreds of customers at once.
+
+---
+
+> ⚠️ Predictions are probabilistic and should supplement human judgment, not replace it.
+                """)
 
     # Footer
     st.divider()
     st.markdown(
         '<p style="color:#484f58; font-size:0.78rem; text-align:center;">'
-        "ChurnGuard AI · 6-Week MLOps Portfolio Project · "
-        "Built with FastAPI + Streamlit + XGBoost + SHAP"
+        "ChurnGuard AI · Customer Retention Intelligence Platform · "
+        "Powered by XGBoost + SHAP · Built on FastAPI &amp; Streamlit"
         "</p>",
         unsafe_allow_html=True,
     )
