@@ -12,6 +12,7 @@ Run:
 
 from __future__ import annotations
 
+import bcrypt
 import json
 import sys
 from pathlib import Path
@@ -132,8 +133,67 @@ st.markdown("""
         margin-top: 8px;
     }
     .reco-item { color: #c9d1d9; font-size: 0.9rem; margin: 6px 0; }
+    /* Login Screen */
+    .login-container {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        height: 80vh;
+    }
+    .login-card {
+        background: rgba(22, 27, 34, 0.9);
+        border: 1px solid rgba(48, 54, 61, 1);
+        border-radius: 16px;
+        padding: 40px;
+        width: 400px;
+        box-shadow: 0 20px 50px rgba(0,0,0,0.5);
+        text-align: center;
+    }
+    .login-title {
+        background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        font-size: 2rem;
+        font-weight: 700;
+        margin-bottom: 8px;
+    }
+    .login-subtitle {
+        color: #8b949e;
+        font-size: 0.9rem;
+        margin-bottom: 32px;
+    }
 </style>
 """, unsafe_allow_html=True)
+
+
+# ── Authentication ────────────────────────────────────────────────────────────
+
+ADMIN_HASH = b"$2b$12$amCWoXmqjip9GRVhRnmNJ.DBvO1ayDKDMK7aOceeiXAXP4kWdmS4m"
+
+def check_password(password: str) -> bool:
+    return bcrypt.checkpw(password.encode(), ADMIN_HASH)
+
+def login_screen():
+    st.markdown('<div class="login-container">', unsafe_allow_html=True)
+    with st.container():
+        st.markdown('<div class="login-card">', unsafe_allow_html=True)
+        st.markdown('<p class="login-title">🔮 ChurnGuard AI</p>', unsafe_allow_html=True)
+        st.markdown('<p class="login-subtitle">Enterprise Intelligence Platform</p>', unsafe_allow_html=True)
+        
+        with st.form("login_form"):
+            user = st.text_input("Username", placeholder="admin")
+            pwd  = st.text_input("Password", type="password", placeholder="••••••••")
+            submit = st.form_submit_button("Sign In", use_container_width=True)
+            
+            if submit:
+                if user == "admin" and check_password(pwd):
+                    st.session_state.authenticated = True
+                    st.rerun()
+                else:
+                    st.error("Invalid credentials")
+        
+        st.markdown('</div>', unsafe_allow_html=True)
+    st.markdown('</div>', unsafe_allow_html=True)
 
 
 # ── Model loading ─────────────────────────────────────────────────────────────
@@ -231,45 +291,60 @@ def make_factor_chart(factors: list[dict]) -> go.Figure:
     # Feature name cleanup and better truncation
     names = [f["feature"].replace("_", " ").title() for f in factors]
     vals  = [f["value"] for f in factors]
-    colors = ["#ef4444" if v > 0 else "#10b981" for v in vals]
+    
+    # Deep, premium colors
+    colors = ["#f87171" if v > 0 else "#34d399" for v in vals] # Softer red/green
 
     fig = go.Figure(go.Bar(
         x=vals,
         y=names,
         orientation="h",
-        marker_color=colors,
-        marker_line_width=0,
-        text=[f"{v:+.3f}" for v in vals],
+        marker=dict(
+            color=colors,
+            line=dict(width=0),
+        ),
+        text=[f" {v:+.3f}" if v > 0 else f"{v:+.3f} " for v in vals],
         textposition="outside",
-        textfont={"color": "#c9d1d9", "size": 12, "family": "Inter"},
+        textfont={"color": "#c9d1d9", "size": 13, "family": "Inter Semibold"},
         cliponaxis=False,
     ))
 
-    # Calculate x-axis range to prevent label cutoff
+    # Calculate x-axis range with a bit of padding for the labels
     max_val = max([abs(v) for v in vals]) if vals else 1
-    x_range = [-max_val * 1.3, max_val * 1.3]
+    padding = max_val * 0.25
+    x_range = [-max_val - padding, max_val + padding]
 
     fig.update_layout(
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
-        margin=dict(t=10, b=10, l=180, r=100), # Increased margins significantly
-        height=max(300, len(factors) * 45),    # Increased bar height
+        margin=dict(t=30, b=10, l=10, r=10), # Tighter margins
+        height=max(320, len(factors) * 40),
         xaxis=dict(
             showgrid=True,
-            gridcolor="rgba(48,54,61,0.5)",
+            gridcolor="rgba(48,54,61,0.3)",
             zeroline=True,
-            zerolinecolor="rgba(139,92,246,0.4)",
-            tickfont={"color": "#8b949e", "size": 11},
-            title=dict(text="SHAP Impact on Churn Probability", font={"color": "#8b949e", "size": 12}),
+            zerolinecolor="rgba(139,92,246,0.5)",
+            tickfont={"color": "#8b949e", "size": 10},
+            title=dict(text="Impact on Churn Risk", font={"color": "#8b949e", "size": 11}),
             range=x_range,
+            anchor="free",
+            position=0,
         ),
         yaxis=dict(
-            tickfont={"color": "#c9d1d9", "size": 12},
+            tickfont={"color": "#e6edf3", "size": 12},
             autorange="reversed",
+            side="left",
+            automargin=True, # Handles long labels automatically
         ),
-        bargap=0.3,
+        bargap=0.35,
         showlegend=False,
+        font=dict(family="Inter", color="#c9d1d9"),
     )
+
+    # Add background shapes for red/green zones
+    fig.add_vrect(x0=0, x1=x_range[1], fillcolor="rgba(239,68,68,0.03)", line_width=0)
+    fig.add_vrect(x0=x_range[0], x1=0, fillcolor="rgba(16,185,129,0.03)", line_width=0)
+
     return fig
 
 
@@ -367,6 +442,9 @@ def sidebar_form() -> dict:
         st.markdown("**Charges**")
         monthly = st.number_input("Monthly Charges ($)", 0.0, 999.0, value=float(p.get("MonthlyCharges", 65.0)), step=0.5)
         total   = st.number_input("Total Charges ($)",   0.0, 99999.0, value=float(p.get("TotalCharges", monthly * tenure if tenure else monthly)), step=1.0)
+
+
+
 
         return {
             "customerID": "DASHBOARD-USER",
@@ -505,9 +583,20 @@ def batch_tab(model, pipeline, feature_names: list, train_metrics: dict):
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
+    if not st.session_state.get("authenticated"):
+        login_screen()
+        return
+
     # Header
-    st.markdown('<p class="main-header">🔮 ChurnGuard AI</p>', unsafe_allow_html=True)
-    st.markdown('<p class="sub-header">Real-time Customer Churn Risk Analysis & Explainability</p>', unsafe_allow_html=True)
+    head_col, out_col = st.columns([5, 1])
+    with head_col:
+        st.markdown('<p class="main-header">🔮 ChurnGuard AI</p>', unsafe_allow_html=True)
+        st.markdown('<p class="sub-header">Real-time Customer Churn Risk Analysis & Explainability</p>', unsafe_allow_html=True)
+    with out_col:
+        st.markdown("<br>", unsafe_allow_html=True)
+        if st.button("Logout", use_container_width=True):
+            st.session_state.authenticated = False
+            st.rerun()
 
     # Load model
     model, pipeline, feature_names, train_metrics = load_artifacts()
