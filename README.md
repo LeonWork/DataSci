@@ -58,9 +58,9 @@ DataSci/
 | 1 | EDA & Data Quality | ✅ Complete |
 | 2 | Feature Engineering & Data Pipeline | ✅ Complete |
 | 3 | Model Development & Experiment Tracking | ✅ Complete |
-| 4 | Model Interpretation & Hyperparameter Tuning | 🔄 In Progress |
-| 5 | FastAPI + Docker Deployment | ⏳ Upcoming |
-| 6 | Streamlit Dashboard + Portfolio Polish | ⏳ Upcoming |
+| 4 | Model Interpretation & Hyperparameter Tuning | ✅ Complete |
+| 5 | FastAPI + Docker Deployment | ✅ Complete |
+| 6 | Streamlit Dashboard + Portfolio Polish | ✅ Complete |
 
 ---
 
