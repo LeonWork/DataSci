@@ -7,7 +7,7 @@ Run once after downloading the Telco CSV:
     python scripts/train_and_save.py
 
 Outputs (in models/):
-    churn_model.joblib    — fitted XGBClassifier
+    churn_model.joblib    — fitted sklearn classifier
     churn_pipeline.joblib — fitted sklearn ColumnTransformer
     model_meta.json       — feature names + training metrics
 """
@@ -32,7 +32,7 @@ from src.data.pipeline import (
 )
 from src.data.load_data import load_raw
 from src.models.evaluate import compute_metrics
-from src.models.train import train_xgboost
+from src.models.train import train_random_forest
 from src.utils.logger import get_logger
 from sklearn.model_selection import train_test_split
 
@@ -158,10 +158,16 @@ def main() -> None:
     X_train_t = pipe.fit_transform(X_train)
     X_test_t  = pipe.transform(X_test)
 
-    logger.info("Training XGBoost model …")
-    result = train_xgboost(
+    logger.info("Training Random Forest model …")
+    result = train_random_forest(
         X_train_t, y_train,
         X_test_t,  y_test,
+        params={
+            "n_estimators": 500,
+            "max_depth": 10,
+            "min_samples_leaf": 6,
+            "class_weight": "balanced_subsample",
+        },
         log_to_mlflow=False,
     )
     model   = result["model"]
@@ -185,6 +191,7 @@ def main() -> None:
         "metrics":       metrics,
         "num_features":  num_cols,
         "cat_features":  cat_cols,
+        "model_family":  "RandomForestClassifier",
     }, indent=2))
 
     logger.info("Saved model      → %s", model_path)

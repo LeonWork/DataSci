@@ -14,7 +14,6 @@ from pathlib import Path
 import joblib
 import numpy as np
 import pandas as pd
-import xgboost as xgb
 
 from src.data.features import engineer_all_features
 from src.data.preprocess import drop_ids, handle_missing
@@ -31,7 +30,7 @@ MODEL_VERSION = "1.0.0"
 
 
 class ChurnPredictor:
-    """Wraps the sklearn pipeline + XGBoost model for inference."""
+    """Wraps the sklearn preprocessing pipeline and trained classifier."""
 
     def __init__(self) -> None:
         self.model = None
@@ -88,7 +87,7 @@ class ChurnPredictor:
         else:
             risk = "High"
 
-        factors = self._shap_factors(X, top_n)
+        factors = self._local_impact_factors(X, prob, top_n)
 
         return {
             "customer_id":       raw.get("customerID", "UNKNOWN"),
@@ -100,12 +99,23 @@ class ChurnPredictor:
             "timestamp":         datetime.now(timezone.utc).isoformat(),
         }
 
-    def _shap_factors(self, X: np.ndarray, top_n: int) -> list[dict]:
+    def _local_impact_factors(self, X: np.ndarray, base_prob: float, top_n: int) -> list[dict]:
+        """
+        Estimate local feature impact by zeroing one transformed feature at a time.
+
+        This is model-agnostic and deploys without SHAP/XGBoost dependencies. A positive
+        value means the current feature value is increasing churn probability relative
+        to a neutralized version of that transformed feature.
+        """
         try:
-            booster = self.model.get_booster()
-            contribs = booster.predict(xgb.DMatrix(X), pred_contribs=True)
-            # XGBoost returns one extra bias term at the end.
-            vals = contribs[0][:-1]
+            X_dense = X.toarray() if hasattr(X, "toarray") else np.asarray(X).copy()
+            vals = []
+            for i in range(X_dense.shape[1]):
+                X_perturbed = X_dense.copy()
+                X_perturbed[0, i] = 0
+                perturbed_prob = float(self.model.predict_proba(X_perturbed)[0, 1])
+                vals.append(base_prob - perturbed_prob)
+            vals = np.asarray(vals)
             indices = np.argsort(np.abs(vals))[::-1][:top_n]
             factors = []
             for i in indices:
@@ -118,7 +128,7 @@ class ChurnPredictor:
                 })
             return factors
         except Exception as exc:
-            logger.warning("SHAP computation failed: %s", exc)
+            logger.warning("Local impact computation failed: %s", exc)
             return []
 
 
