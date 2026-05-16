@@ -20,6 +20,7 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from io import BytesIO
+import os
 from pathlib import Path
 
 import pandas as pd
@@ -48,7 +49,11 @@ from src.utils.logger import get_logger
 logger = get_logger(__name__)
 ROOT = Path(__file__).resolve().parents[2]
 WEB_DIR = ROOT / "web"
-FEEDBACK_PATH = ROOT / "data" / "company_feedback.csv"
+FEEDBACK_PATH = (
+    Path("/tmp") / "churnguard_company_feedback.csv"
+    if os.getenv("VERCEL")
+    else ROOT / "data" / "company_feedback.csv"
+)
 BATCH_REQUIRED_COLS = [
     "gender", "SeniorCitizen", "Partner", "Dependents", "tenure",
     "PhoneService", "MultipleLines", "InternetService", "OnlineSecurity",

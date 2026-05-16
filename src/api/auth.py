@@ -19,7 +19,11 @@ from src.utils.logger import get_logger
 logger = get_logger(__name__)
 
 ROOT = Path(__file__).resolve().parents[2]
-USER_STORE_PATH = ROOT / "data" / "app_users.json"
+USER_STORE_PATH = (
+    Path("/tmp") / "churnguard_app_users.json"
+    if os.getenv("VERCEL")
+    else ROOT / "data" / "app_users.json"
+)
 USERNAME_PATTERN = re.compile(r"^[a-zA-Z0-9_.-]{3,32}$")
 DEFAULT_AUTH_USERNAME = "admin"
 DEFAULT_AUTH_PASSWORD_HASH = b"$2b$12$amCWoXmqjip9GRVhRnmNJ.DBvO1ayDKDMK7aOceeiXAXP4kWdmS4m"
