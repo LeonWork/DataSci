@@ -14,7 +14,7 @@ from pathlib import Path
 import joblib
 import numpy as np
 import pandas as pd
-import shap
+import xgboost as xgb
 
 from src.data.features import engineer_all_features
 from src.data.preprocess import drop_ids, handle_missing
@@ -102,12 +102,10 @@ class ChurnPredictor:
 
     def _shap_factors(self, X: np.ndarray, top_n: int) -> list[dict]:
         try:
-            explainer = shap.TreeExplainer(self.model)
-            sv = explainer.shap_values(X)
-            # Binary XGB: sv may be 2D (n_samples × n_features)
-            if isinstance(sv, list):
-                sv = sv[1]
-            vals = sv[0]
+            booster = self.model.get_booster()
+            contribs = booster.predict(xgb.DMatrix(X), pred_contribs=True)
+            # XGBoost returns one extra bias term at the end.
+            vals = contribs[0][:-1]
             indices = np.argsort(np.abs(vals))[::-1][:top_n]
             factors = []
             for i in indices:

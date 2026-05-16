@@ -75,6 +75,7 @@ cd DataSci
 python -m venv venv
 source venv/bin/activate      # Windows: venv\Scripts\activate
 pip install -r requirements.txt
+pip install -r requirements-dev.txt  # optional: notebooks, tests, training tools
 ```
 
 ### 2. Download the dataset
