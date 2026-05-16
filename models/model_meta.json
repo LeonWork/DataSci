@@ -43,11 +43,11 @@
     "SeniorCitizen_Yes"
   ],
   "metrics": {
-    "roc_auc": 0.7133,
-    "f1": 0.4167,
-    "accuracy": 0.7317,
-    "precision": 0.3771,
-    "recall": 0.4655
+    "roc_auc": 0.7946,
+    "f1": 0.5385,
+    "accuracy": 0.6856,
+    "precision": 0.4116,
+    "recall": 0.7786
   },
   "num_features": [
     "tenure",
@@ -79,5 +79,27 @@
     "PaymentMethod",
     "tenure_band",
     "SeniorCitizen"
-  ]
+  ],
+  "training_sources": [
+    "IBM Telco",
+    "data/external/labeled_churn/*.csv",
+    "data/company_feedback.csv"
+  ],
+  "tuning": {
+    "method": "Optuna TPESampler",
+    "trials": 25,
+    "best_cv_auc": 0.8080876578464959,
+    "best_params": {
+      "n_estimators": 454,
+      "max_depth": 3,
+      "learning_rate": 0.019789611644660678,
+      "subsample": 0.7040006708826954,
+      "colsample_bytree": 0.9907163943908613,
+      "min_child_weight": 9,
+      "gamma": 2.2599270011496273,
+      "reg_alpha": 0.019695160310883194,
+      "reg_lambda": 4.306484324933145,
+      "scale_pos_weight": 4
+    }
+  }
 }

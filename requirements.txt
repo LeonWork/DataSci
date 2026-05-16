@@ -35,8 +35,7 @@ uvicorn[standard]>=0.29.0
 pydantic>=2.7.0
 python-multipart>=0.0.9
 
-# Dashboard
-streamlit>=1.35.0
+# Web app authentication
 bcrypt>=4.1.0
 
 # Serialisation

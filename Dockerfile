@@ -26,6 +26,7 @@ COPY --from=builder /usr/local/bin /usr/local/bin
 
 # Copy source code and model artefacts
 COPY src/       ./src/
+COPY web/       ./web/
 COPY models/    ./models/
 COPY scripts/   ./scripts/
 

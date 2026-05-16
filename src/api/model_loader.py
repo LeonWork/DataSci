@@ -75,7 +75,7 @@ class ChurnPredictor:
     def predict(
         self,
         raw: dict,
-        top_n: int = 5,
+        top_n: int = 10,
     ) -> dict:
         X = self._preprocess(raw)
         prob = float(self.model.predict_proba(X)[0, 1])

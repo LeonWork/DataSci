@@ -77,3 +77,44 @@ class ModelInfoResponse(BaseModel):
     feature_names: list[str]
     training_metrics: dict
     version: str
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+class SignupRequest(BaseModel):
+    username: str
+    email: str
+    password: str
+    confirm_password: str
+
+
+class AuthResponse(BaseModel):
+    ok: bool
+    username: str
+    message: str
+
+
+class CsvPredictionRow(BaseModel):
+    customerID: str
+    churn_probability: float
+    risk_level: Literal["Low", "Medium", "High"]
+    top_driver: str
+    tenure: int | None = None
+    contract: str | None = None
+    monthly_charges: float | None = None
+
+
+class CsvPredictionResponse(BaseModel):
+    total: int
+    high_risk_count: int
+    rows: list[CsvPredictionRow]
+
+
+class LearningUploadResponse(BaseModel):
+    ok: bool
+    accepted_rows: int
+    stored_rows: int
+    message: str

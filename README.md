@@ -1,7 +1,7 @@
 # 📉 Customer Churn Prediction — MLOps Pipeline
 
 > **Predict which telecom customers will churn — before they do.**  
-> End-to-end ML project with feature engineering, model explainability, a REST API, and a live dashboard.
+> End-to-end ML project with feature engineering, model explainability, a FastAPI backend, and a custom web app.
 
 ---
 
@@ -12,7 +12,7 @@ Customer churn is a critical business problem in the telecom industry. Losing a 
 1. **Predict** which customers are at risk of churning (binary classification)
 2. **Explain** *why* they're likely to churn using SHAP values
 3. **Serve** predictions through a FastAPI REST endpoint
-4. **Monitor** model performance over time via a Streamlit dashboard
+4. **Analyze** single customers and CSV uploads in a custom browser UI
 
 **Target metric:** F1-Score (balancing precision and recall for an imbalanced dataset)
 
@@ -41,6 +41,7 @@ DataSci/
 │   ├── models/         # Training, evaluation, and saving logic
 │   ├── api/            # FastAPI application
 │   └── utils/          # Shared helpers (logging, config, metrics)
+├── web/                # Custom HTML/CSS/JS app served by FastAPI
 ├── tests/              # Unit and integration tests
 ├── models/             # Serialized model artifacts (.pkl, .joblib)
 ├── docs/               # Architecture diagrams, model cards
@@ -60,7 +61,7 @@ DataSci/
 | 3 | Model Development & Experiment Tracking | ✅ Complete |
 | 4 | Model Interpretation & Hyperparameter Tuning | ✅ Complete |
 | 5 | FastAPI + Docker Deployment | ✅ Complete |
-| 6 | Streamlit Dashboard + Portfolio Polish | ✅ Complete |
+| 6 | Custom Web App + Portfolio Polish | ✅ Complete |
 
 ---
 
@@ -103,7 +104,7 @@ jupyter lab notebooks/01_eda.ipynb
 | **ML** | XGBoost, LightGBM, SHAP, Imbalanced-learn |
 | **MLOps** | MLflow, DVC (optional) |
 | **API** | FastAPI, Pydantic, Uvicorn |
-| **Dashboard** | Streamlit |
+| **Web App** | FastAPI StaticFiles, HTML, CSS, JavaScript |
 | **Infrastructure** | Docker, Docker Compose |
 | **Deployment** | Render / Railway / Hugging Face Spaces |
 
@@ -136,17 +137,27 @@ Top churn drivers (from SHAP analysis):
 *(Available after Week 5)*
 
 ```
+GET  /               — Web app
+POST /auth/signup    — Create local user
+POST /auth/login     — Authenticate local user
 POST /predict        — Single customer churn probability
-POST /batch_predict  — Batch CSV predictions
+POST /predict-csv    — Score customer CSV uploads
+POST /learning/upload — Store labeled CSV rows for future retraining
 GET  /health         — API health check
 ```
 
-## 🔐 Dashboard Login
+## 🔐 Web App Login
 
-Run the local dashboard:
+Run the custom web app:
 
 ```bash
-streamlit run dashboard/app.py
+uvicorn src.api.main:app --reload --port 8000
+```
+
+Then open:
+
+```text
+http://localhost:8000
 ```
 
 Development fallback credentials:
@@ -156,18 +167,35 @@ Username: admin
 Password: admin123
 ```
 
-The dashboard also supports self-service sign up. New local accounts are saved in
+The app also supports self-service sign up. New local accounts are saved in
 `data/app_users.json` with bcrypt password hashes. That file is ignored by Git.
 
-Override them with environment variables before starting Streamlit:
+Override them with environment variables before starting the app:
 
 ```bash
 export CHURNGUARD_USERNAME="admin"
 export CHURNGUARD_PASSWORD="choose-a-local-password"
-streamlit run dashboard/app.py
+uvicorn src.api.main:app --reload --port 8000
 ```
 
 For deployments, prefer `CHURNGUARD_PASSWORD_HASH` with a bcrypt hash instead of a plain-text password.
+
+## 🧠 Learning From Company CSVs
+
+Unlabeled company CSVs can be scored immediately through the Batch CSV analysis panel.
+To improve the model, upload labeled CSVs that include a known `Churn` column through
+the Learning Queue panel. Those rows are stored in `data/company_feedback.csv`, which is
+ignored by Git. The next run of `python scripts/train_and_save.py` automatically includes
+that labeled feedback in training.
+
+You can also add reviewed labeled datasets as CSV files in:
+
+```text
+data/external/labeled_churn/
+```
+
+Those files must use the same customer columns as the IBM Telco dataset plus `Churn`.
+They are included automatically the next time you run `python scripts/train_and_save.py`.
 
 ---
 

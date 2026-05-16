@@ -1,0 +1,280 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ChurnGuard AI</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="app">
+      <section id="authView" class="auth-view">
+        <div class="auth-copy">
+          <p class="eyebrow">Retention intelligence</p>
+          <h1>ChurnGuard AI</h1>
+          <p>Predict churn risk, inspect the strongest drivers, and turn model output into retention action.</p>
+        </div>
+
+        <div class="auth-card">
+          <div class="segmented" role="tablist" aria-label="Authentication mode">
+            <button id="signinTab" class="active" type="button">Sign in</button>
+            <button id="signupTab" type="button">Create account</button>
+          </div>
+
+          <form id="signinForm" class="auth-form">
+            <label>
+              Username
+              <input name="username" autocomplete="username" value="admin" required />
+            </label>
+            <label>
+              Password
+              <input name="password" type="password" autocomplete="current-password" value="admin123" required />
+            </label>
+            <button type="submit">Sign in</button>
+          </form>
+
+          <form id="signupForm" class="auth-form hidden">
+            <label>
+              Username
+              <input name="username" autocomplete="username" placeholder="sam.retain" required />
+            </label>
+            <label>
+              Email
+              <input name="email" type="email" autocomplete="email" placeholder="sam@example.com" required />
+            </label>
+            <label>
+              Password
+              <input name="password" type="password" autocomplete="new-password" minlength="8" required />
+            </label>
+            <label>
+              Confirm password
+              <input name="confirm_password" type="password" autocomplete="new-password" minlength="8" required />
+            </label>
+            <button type="submit">Create account</button>
+          </form>
+          <p id="authMessage" class="message"></p>
+        </div>
+      </section>
+
+      <section id="dashboardView" class="dashboard hidden">
+        <button id="toggleSidebar" class="sidebar-toggle" type="button" aria-label="Hide sidebar">‹</button>
+        <aside class="sidebar">
+          <div class="sidebar-header">
+            <p class="eyebrow">Model inputs</p>
+            <h2>Customer profile</h2>
+            <p>Adjust account, service, and billing attributes.</p>
+          </div>
+
+          <div class="preset-row">
+            <button id="highPreset" type="button">High risk preset</button>
+            <button id="lowPreset" type="button">Low risk preset</button>
+          </div>
+
+          <form id="profileForm" class="profile-form">
+            <fieldset>
+              <legend>Demographics</legend>
+              <label>Gender<select name="gender"><option>Male</option><option>Female</option></select></label>
+              <label>Senior Citizen<select name="SeniorCitizen"><option>No</option><option>Yes</option></select></label>
+              <label>Partner<select name="Partner"><option>No</option><option>Yes</option></select></label>
+              <label>Dependents<select name="Dependents"><option>No</option><option>Yes</option></select></label>
+            </fieldset>
+
+            <fieldset>
+              <legend>Account</legend>
+              <label>Tenure months<input name="tenure" type="number" min="0" max="72" value="12" /></label>
+              <label>Contract<select name="Contract"><option>Month-to-month</option><option>One year</option><option>Two year</option></select></label>
+              <label>Paperless Billing<select name="PaperlessBilling"><option>Yes</option><option>No</option></select></label>
+              <label>Payment Method<select name="PaymentMethod"><option>Electronic check</option><option>Mailed check</option><option>Bank transfer (automatic)</option><option>Credit card (automatic)</option></select></label>
+            </fieldset>
+
+            <fieldset>
+              <legend>Services</legend>
+              <label>Phone Service<select name="PhoneService"><option>Yes</option><option>No</option></select></label>
+              <label>Multiple Lines<select name="MultipleLines"><option>No</option><option>Yes</option><option>No phone service</option></select></label>
+              <label>Internet Service<select name="InternetService"><option>DSL</option><option>Fiber optic</option><option>No</option></select></label>
+              <label>Online Security<select name="OnlineSecurity"><option>No</option><option>Yes</option><option>No internet service</option></select></label>
+              <label>Online Backup<select name="OnlineBackup"><option>No</option><option>Yes</option><option>No internet service</option></select></label>
+              <label>Device Protection<select name="DeviceProtection"><option>No</option><option>Yes</option><option>No internet service</option></select></label>
+              <label>Tech Support<select name="TechSupport"><option>No</option><option>Yes</option><option>No internet service</option></select></label>
+              <label>Streaming TV<select name="StreamingTV"><option>No</option><option>Yes</option><option>No internet service</option></select></label>
+              <label>Streaming Movies<select name="StreamingMovies"><option>No</option><option>Yes</option><option>No internet service</option></select></label>
+            </fieldset>
+
+            <fieldset>
+              <legend>Charges</legend>
+              <label>Monthly Charges<input name="MonthlyCharges" type="number" min="0" step="0.5" value="65" /></label>
+              <label>Total Charges<input name="TotalCharges" type="number" min="0" step="1" value="780" /></label>
+            </fieldset>
+
+            <button class="primary" type="submit">Analyze churn risk</button>
+          </form>
+        </aside>
+
+        <section class="workspace">
+          <header class="topbar">
+            <div>
+              <p class="eyebrow">Retention intelligence</p>
+              <h1>ChurnGuard AI</h1>
+              <p>Score churn risk and explain the factors behind each prediction.</p>
+            </div>
+            <div class="user-box">
+              <span id="signedInUser"></span>
+              <button id="openLab" type="button">Improvement lab</button>
+              <button id="logoutButton" type="button">Logout</button>
+            </div>
+          </header>
+
+          <section id="dashboardPage">
+            <section class="metric-grid">
+              <article class="metric-card"><span>Model</span><strong id="modelType">XGBoost</strong><small>Tuned classifier</small></article>
+              <article class="metric-card"><span>Training AUC</span><strong id="modelAuc">--</strong><small>Ranking quality</small></article>
+              <article class="metric-card"><span>Features</span><strong id="featureCount">--</strong><small>Engineered inputs</small></article>
+            </section>
+
+            <section id="emptyState" class="empty-state">
+              <h2>Ready to score a customer</h2>
+              <p>Use the sidebar controls or a preset, then run the analysis.</p>
+            </section>
+
+            <section id="results" class="results hidden">
+            <article class="result-card probability-card">
+              <p class="eyebrow">Churn probability</p>
+              <div id="probabilityValue" class="probability">--%</div>
+              <span id="riskBadge" class="risk-badge">Risk</span>
+              <div class="probability-scale" aria-label="Probability threshold chart">
+                <div class="scale-band low"></div>
+                <div class="scale-band medium"></div>
+                <div class="scale-band high"></div>
+                <div id="probabilityMarker" class="probability-marker"></div>
+              </div>
+              <div class="scale-labels">
+                <span>0%</span>
+                <span>30%</span>
+                <span>65%</span>
+                <span>100%</span>
+              </div>
+              <div class="probability-stats">
+                <div><strong id="riskMargin">--</strong><span>Distance to next tier</span></div>
+                <div><strong id="oddsValue">--</strong><span>Estimated churn odds</span></div>
+              </div>
+            </article>
+
+            <article class="result-card stat-card">
+              <p class="eyebrow">Impact summary</p>
+              <div class="impact-stats">
+                <div><strong id="driverCount">0</strong><span>Risk drivers</span></div>
+                <div><strong id="protectorCount">0</strong><span>Protective factors</span></div>
+                <div><strong id="strongestFactor">--</strong><span>Strongest factor</span></div>
+              </div>
+            </article>
+
+            <article class="result-card">
+              <p class="eyebrow">Feature impact</p>
+              <p class="panel-copy">Click a factor for a deeper analysis view.</p>
+              <div id="factorList" class="factor-list"></div>
+            </article>
+
+            <article class="result-card">
+              <p class="eyebrow">Recommended actions</p>
+              <ul id="recommendations" class="recommendations"></ul>
+            </article>
+            </section>
+
+            <section id="featureDetail" class="feature-detail hidden">
+            <div class="detail-header">
+              <div>
+                <p class="eyebrow">Feature drilldown</p>
+                <h2 id="detailTitle">Feature analysis</h2>
+              </div>
+              <button id="closeDetail" type="button">Close</button>
+            </div>
+            <div class="detail-grid">
+              <article class="result-card">
+                <p class="eyebrow">Current customer</p>
+                <div id="detailValue" class="detail-value">--</div>
+                <p id="detailDirection" class="panel-copy"></p>
+              </article>
+              <article class="result-card">
+                <p class="eyebrow">Impact chart</p>
+                <div id="detailImpactChart" class="detail-impact-chart"></div>
+              </article>
+              <article class="result-card">
+                <p class="eyebrow">Scenario demo</p>
+                <div id="scenarioDemo" class="scenario-demo"></div>
+              </article>
+              <article class="result-card">
+                <p class="eyebrow">Model notes</p>
+                <ul id="detailNotes" class="recommendations"></ul>
+              </article>
+            </div>
+            </section>
+
+            <section class="analysis-grid">
+            <article class="result-card">
+              <p class="eyebrow">Batch CSV analysis</p>
+              <h2>Score a customer file</h2>
+              <p class="panel-copy">Upload a CSV with the same customer columns to rank accounts by churn probability.</p>
+              <input id="batchCsv" type="file" accept=".csv" />
+              <div id="batchSummary" class="batch-summary"></div>
+              <div id="riskChart" class="risk-chart"></div>
+              <div id="batchTable" class="table-wrap"></div>
+            </article>
+
+            <article class="result-card">
+              <p class="eyebrow">Learning queue</p>
+              <h2>Improve with labeled company data</h2>
+              <p class="panel-copy">Upload CSVs that include known <code>Churn</code> outcomes. Rows are stored for retraining and drift review.</p>
+              <input id="learningCsv" type="file" accept=".csv" />
+              <div id="learningStatus" class="learning-status"></div>
+            </article>
+            </section>
+          </section>
+
+          <section id="labPage" class="lab-page hidden">
+            <button id="backToDashboard" class="back-button" type="button">Back to dashboard</button>
+            <div class="lab-hero">
+              <p class="eyebrow">Improvement lab</p>
+              <h2>Demo ways to improve a customer score</h2>
+              <p>Use this page to understand what the model learned and how retention actions can reduce risk signals.</p>
+            </div>
+            <div class="lab-grid">
+              <article class="result-card">
+                <p class="eyebrow">Contract demo</p>
+                <h3>Move from monthly to annual</h3>
+                <p class="panel-copy">The model usually treats month-to-month contracts as a major churn driver. Try the sidebar preset, switch Contract to One year or Two year, and rerun the score.</p>
+                <div class="scenario-row"><span>Monthly</span><div class="scenario-track"><div class="scenario-fill" style="width:78%;background:var(--red)"></div></div><span>Higher</span></div>
+                <div class="scenario-row"><span>Annual</span><div class="scenario-track"><div class="scenario-fill" style="width:42%;background:var(--green)"></div></div><span>Lower</span></div>
+              </article>
+              <article class="result-card">
+                <p class="eyebrow">Service demo</p>
+                <h3>Add support coverage</h3>
+                <p class="panel-copy">Missing online security, backup, device protection, or tech support often adds risk for internet customers.</p>
+                <div class="scenario-row"><span>No support</span><div class="scenario-track"><div class="scenario-fill" style="width:70%;background:var(--amber)"></div></div><span>Risk</span></div>
+                <div class="scenario-row"><span>Supported</span><div class="scenario-track"><div class="scenario-fill" style="width:38%;background:var(--green)"></div></div><span>Safer</span></div>
+              </article>
+              <article class="result-card">
+                <p class="eyebrow">Billing demo</p>
+                <h3>Review high monthly charges</h3>
+                <p class="panel-copy">High monthly charges can become a churn signal, especially when paired with short tenure or monthly contracts.</p>
+                <div class="scenario-row"><span>High bill</span><div class="scenario-track"><div class="scenario-fill" style="width:76%;background:var(--red)"></div></div><span>Risk</span></div>
+                <div class="scenario-row"><span>Bundle</span><div class="scenario-track"><div class="scenario-fill" style="width:48%;background:var(--green)"></div></div><span>Lower</span></div>
+              </article>
+              <article class="result-card">
+                <p class="eyebrow">Model learning</p>
+                <h3>Train on your own outcomes</h3>
+                <p class="panel-copy">Upload labeled CSVs with a Churn column in the Learning Queue. The next training run includes those rows, so the model adapts to the kinds of customers your companies actually serve.</p>
+                <ul class="recommendations">
+                  <li>Use unlabeled CSVs for scoring.</li>
+                  <li>Use labeled CSVs for learning.</li>
+                  <li>Keep the schema aligned with the Telco fields shown in the sidebar.</li>
+                </ul>
+              </article>
+            </div>
+          </section>
+        </section>
+      </section>
+    </main>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
