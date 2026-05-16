@@ -37,6 +37,7 @@ python-multipart>=0.0.9
 
 # Dashboard
 streamlit>=1.35.0
+bcrypt>=4.1.0
 
 # Serialisation
 joblib>=1.4.0

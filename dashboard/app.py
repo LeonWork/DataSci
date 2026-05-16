@@ -13,7 +13,10 @@ Run:
 from __future__ import annotations
 
 import bcrypt
+import hmac
 import json
+import os
+import re
 import sys
 from pathlib import Path
 
@@ -37,6 +40,7 @@ logger = get_logger("dashboard")
 MODEL_PATH    = ROOT / "models" / "churn_model.joblib"
 PIPELINE_PATH = ROOT / "models" / "churn_pipeline.joblib"
 META_PATH     = ROOT / "models" / "model_meta.json"
+USER_STORE_PATH = ROOT / "data" / "app_users.json"
 
 # ── Page config ───────────────────────────────────────────────────────────────
 
@@ -134,33 +138,56 @@ st.markdown("""
     }
     .reco-item { color: #c9d1d9; font-size: 0.9rem; margin: 6px 0; }
     /* Login Screen */
-    .login-container {
-        display: flex;
-        justify-content: center;
-        align-items: center;
-        height: 80vh;
+    [data-testid="stAppViewContainer"] > .main .block-container {
+        padding-top: 2.5rem;
     }
-    .login-card {
-        background: rgba(22, 27, 34, 0.9);
-        border: 1px solid rgba(48, 54, 61, 1);
-        border-radius: 16px;
-        padding: 40px;
-        width: 400px;
-        box-shadow: 0 20px 50px rgba(0,0,0,0.5);
+    .login-shell {
         text-align: center;
+        padding-top: 2vh;
+        margin-bottom: 1.25rem;
+    }
+    .login-eyebrow {
+        color: #7dd3fc;
+        font-size: 0.78rem;
+        font-weight: 700;
+        letter-spacing: 0;
+        text-transform: uppercase;
+        margin-bottom: 0.35rem;
     }
     .login-title {
         background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
-        font-size: 2rem;
+        font-size: 2.35rem;
         font-weight: 700;
-        margin-bottom: 8px;
+        line-height: 1.08;
+        margin-bottom: 0.45rem;
     }
     .login-subtitle {
         color: #8b949e;
-        font-size: 0.9rem;
-        margin-bottom: 32px;
+        font-size: 0.96rem;
+        margin-bottom: 0;
+    }
+    div[data-testid="stForm"] {
+        background: rgba(22, 27, 34, 0.94);
+        border: 1px solid rgba(99, 102, 241, 0.26);
+        border-radius: 14px;
+        padding: 1.4rem 1.35rem 1.2rem;
+        box-shadow: 0 24px 70px rgba(0,0,0,0.38);
+    }
+    div[data-testid="stForm"] label {
+        color: #c9d1d9 !important;
+        font-size: 0.84rem !important;
+        font-weight: 600 !important;
+    }
+    div[data-testid="stForm"] input {
+        border-radius: 8px;
+    }
+    .auth-caption {
+        color: #6e7681;
+        font-size: 0.78rem;
+        text-align: center;
+        margin-top: 1rem;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -168,32 +195,170 @@ st.markdown("""
 
 # ── Authentication ────────────────────────────────────────────────────────────
 
-ADMIN_HASH = b"$2b$12$amCWoXmqjip9GRVhRnmNJ.DBvO1ayDKDMK7aOceeiXAXP4kWdmS4m"
+DEFAULT_AUTH_USERNAME = "admin"
+DEFAULT_AUTH_PASSWORD_HASH = b"$2b$12$amCWoXmqjip9GRVhRnmNJ.DBvO1ayDKDMK7aOceeiXAXP4kWdmS4m"
+USERNAME_PATTERN = re.compile(r"^[a-zA-Z0-9_.-]{3,32}$")
 
-def check_password(password: str) -> bool:
-    return bcrypt.checkpw(password.encode(), ADMIN_HASH)
+
+def _auth_setting(name: str, default: str | None = None) -> str | None:
+    """Read auth settings from environment first, then Streamlit secrets."""
+    value = os.getenv(name)
+    if value:
+        return value
+
+    try:
+        value = st.secrets.get(name)
+    except Exception:
+        value = None
+
+    return str(value) if value else default
+
+
+def _normalize_username(username: str) -> str:
+    return username.strip().lower()
+
+
+def _load_users() -> dict:
+    if not USER_STORE_PATH.exists():
+        return {}
+
+    try:
+        return json.loads(USER_STORE_PATH.read_text())
+    except json.JSONDecodeError:
+        logger.error("User store is not valid JSON: %s", USER_STORE_PATH)
+        return {}
+
+
+def _save_users(users: dict) -> None:
+    USER_STORE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    USER_STORE_PATH.write_text(json.dumps(users, indent=2, sort_keys=True))
+
+
+def _password_hash(password: str) -> str:
+    return bcrypt.hashpw(password.encode(), bcrypt.gensalt(rounds=12)).decode()
+
+
+def _verify_password(password: str, password_hash: str) -> bool:
+    return bcrypt.checkpw(password.encode(), password_hash.encode())
+
+
+def create_user(username: str, email: str, password: str, confirm_password: str) -> tuple[bool, str]:
+    username_key = _normalize_username(username)
+    email = email.strip().lower()
+
+    if not USERNAME_PATTERN.match(username_key):
+        return False, "Use 3-32 characters: letters, numbers, dots, dashes, or underscores."
+    if "@" not in email or "." not in email.split("@")[-1]:
+        return False, "Enter a valid email address."
+    if len(password) < 8:
+        return False, "Password must be at least 8 characters."
+    if password != confirm_password:
+        return False, "Passwords do not match."
+
+    users = _load_users()
+    if username_key in users:
+        return False, "That username is already taken."
+    if any(user.get("email") == email for user in users.values()):
+        return False, "An account with that email already exists."
+
+    users[username_key] = {
+        "username": username_key,
+        "email": email,
+        "password_hash": _password_hash(password),
+    }
+    _save_users(users)
+    return True, "Account created."
+
+
+def find_user(username: str, password: str) -> dict | None:
+    username_key = _normalize_username(username)
+    users = _load_users()
+    user = users.get(username_key)
+
+    if user and _verify_password(password, user["password_hash"]):
+        return user
+
+    expected_username = _auth_setting("CHURNGUARD_USERNAME", DEFAULT_AUTH_USERNAME)
+    password_hash = _auth_setting("CHURNGUARD_PASSWORD_HASH")
+    plain_password = _auth_setting("CHURNGUARD_PASSWORD")
+
+    username_ok = hmac.compare_digest(username_key, _normalize_username(expected_username))
+
+    if password_hash:
+        password_ok = _verify_password(password, password_hash)
+    elif plain_password:
+        password_ok = hmac.compare_digest(password, plain_password)
+    else:
+        password_ok = bcrypt.checkpw(password.encode(), DEFAULT_AUTH_PASSWORD_HASH)
+
+    if username_ok and password_ok:
+        return {"username": username_key, "email": ""}
+
+    return None
+
+
+def check_credentials(username: str, password: str) -> bool:
+    return find_user(username, password) is not None
+
 
 def login_screen():
-    st.markdown('<div class="login-container">', unsafe_allow_html=True)
-    with st.container():
-        st.markdown('<div class="login-card">', unsafe_allow_html=True)
-        st.markdown('<p class="login-title">🔮 ChurnGuard AI</p>', unsafe_allow_html=True)
-        st.markdown('<p class="login-subtitle">Enterprise Intelligence Platform</p>', unsafe_allow_html=True)
-        
-        with st.form("login_form"):
-            user = st.text_input("Username", placeholder="admin")
-            pwd  = st.text_input("Password", type="password", placeholder="••••••••")
-            submit = st.form_submit_button("Sign In", use_container_width=True)
-            
-            if submit:
-                if user == "admin" and check_password(pwd):
-                    st.session_state.authenticated = True
-                    st.rerun()
-                else:
-                    st.error("Invalid credentials")
-        
-        st.markdown('</div>', unsafe_allow_html=True)
-    st.markdown('</div>', unsafe_allow_html=True)
+    _, auth_col, _ = st.columns([1.25, 1, 1.25])
+
+    with auth_col:
+        st.markdown(
+            """
+            <div class="login-shell">
+                <p class="login-eyebrow">Customer Retention Intelligence</p>
+                <p class="login-title">ChurnGuard AI</p>
+                <p class="login-subtitle">Sign in or create an account to access churn risk analysis.</p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        auth_mode = st.radio(
+            "Authentication mode",
+            ["Sign in", "Create account"],
+            horizontal=True,
+            label_visibility="collapsed",
+        )
+
+        if auth_mode == "Sign in":
+            with st.form("login_form"):
+                user = st.text_input("Username", placeholder="admin")
+                pwd = st.text_input("Password", type="password", placeholder="admin123")
+                submit = st.form_submit_button("Sign In", use_container_width=True)
+
+                if submit:
+                    account = find_user(user, pwd)
+                    if account:
+                        st.session_state.authenticated = True
+                        st.session_state.current_user = account["username"]
+                        st.rerun()
+                    else:
+                        st.error("Invalid username or password.")
+        else:
+            with st.form("signup_form"):
+                user = st.text_input("Username", placeholder="sam.retain")
+                email = st.text_input("Email", placeholder="sam@example.com")
+                pwd = st.text_input("Password", type="password", placeholder="At least 8 characters")
+                confirm_pwd = st.text_input("Confirm password", type="password")
+                submit = st.form_submit_button("Create Account", use_container_width=True)
+
+                if submit:
+                    created, message = create_user(user, email, pwd, confirm_pwd)
+                    if created:
+                        st.session_state.authenticated = True
+                        st.session_state.current_user = _normalize_username(user)
+                        st.success(message)
+                        st.rerun()
+                    else:
+                        st.error(message)
+
+        st.markdown(
+            '<p class="auth-caption">Local demo accounts are stored with bcrypt password hashes.</p>',
+            unsafe_allow_html=True,
+        )
 
 
 # ── Model loading ─────────────────────────────────────────────────────────────
@@ -594,8 +759,12 @@ def main():
         st.markdown('<p class="sub-header">Real-time Customer Churn Risk Analysis & Explainability</p>', unsafe_allow_html=True)
     with out_col:
         st.markdown("<br>", unsafe_allow_html=True)
+        current_user = st.session_state.get("current_user")
+        if current_user:
+            st.caption(f"Signed in as {current_user}")
         if st.button("Logout", use_container_width=True):
             st.session_state.authenticated = False
+            st.session_state.pop("current_user", None)
             st.rerun()
 
     # Load model

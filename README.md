@@ -141,6 +141,34 @@ POST /batch_predict  — Batch CSV predictions
 GET  /health         — API health check
 ```
 
+## 🔐 Dashboard Login
+
+Run the local dashboard:
+
+```bash
+streamlit run dashboard/app.py
+```
+
+Development fallback credentials:
+
+```text
+Username: admin
+Password: admin123
+```
+
+The dashboard also supports self-service sign up. New local accounts are saved in
+`data/app_users.json` with bcrypt password hashes. That file is ignored by Git.
+
+Override them with environment variables before starting Streamlit:
+
+```bash
+export CHURNGUARD_USERNAME="admin"
+export CHURNGUARD_PASSWORD="choose-a-local-password"
+streamlit run dashboard/app.py
+```
+
+For deployments, prefer `CHURNGUARD_PASSWORD_HASH` with a bcrypt hash instead of a plain-text password.
+
 ---
 
 ## 📝 License

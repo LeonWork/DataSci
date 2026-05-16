@@ -26,6 +26,7 @@ data/raw/*.xlsx
 data/raw/*.json
 data/processed/*.csv
 data/processed/*.parquet
+data/app_users.json
 
 # Model artifacts (use MLflow / DVC instead)
 models/*.pkl
