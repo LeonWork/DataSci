@@ -16,7 +16,13 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
-from src.api.auth import authenticate_user, create_session_token, create_session_token_for_user, signup_enabled
+from src.api.auth import (
+    authenticate_user,
+    create_session_token,
+    create_session_token_for_user,
+    create_user,
+    signup_enabled,
+)
 from src.api.main import app
 from src.api.schemas import CustomerFeatures
 
@@ -340,3 +346,24 @@ class TestAuthDefaults:
         monkeypatch.delenv("CHURNGUARD_ENABLE_SIGNUP", raising=False)
         monkeypatch.delenv("CHURNGUARD_SIGNUP_CODE", raising=False)
         assert signup_enabled() is False
+
+    def test_signup_creates_database_user(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("CHURNGUARD_DB_PATH", str(tmp_path / "auth.sqlite3"))
+        monkeypatch.setenv("CHURNGUARD_ENABLE_SIGNUP", "true")
+        monkeypatch.delenv("CHURNGUARD_USE_LEGACY_JSON_USERS", raising=False)
+
+        ok, message, user = create_user(
+            "analyst1",
+            "analyst1@example.com",
+            "secure-password",
+            "secure-password",
+        )
+
+        assert ok is True
+        assert message == "Account created."
+        assert user["role"] == "analyst"
+
+        authed = authenticate_user("analyst1", "secure-password")
+        assert authed is not None
+        assert authed["username"] == "analyst1"
+        assert authed["company_id"] == "default"

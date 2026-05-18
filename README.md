@@ -203,8 +203,17 @@ export CHURNGUARD_PASSWORD="choose-a-local-password"
 uvicorn src.api.main:app --reload --port 8000
 ```
 
-New local accounts are saved in `data/app_users.json` with bcrypt password hashes.
-That file is ignored by Git.
+New accounts are saved in the application database with bcrypt password hashes.
+Local development uses `data/churnguard.sqlite3`; production can use Neon/Postgres
+by setting `DATABASE_URL`.
+
+```text
+DATABASE_URL="postgresql://USER:PASSWORD@HOST/dbname?sslmode=require"
+CHURNGUARD_COMPANY_ID="your-company"
+CHURNGUARD_COMPANY_NAME="Your Company"
+```
+
+For legacy local JSON users only, set `CHURNGUARD_USE_LEGACY_JSON_USERS=true`.
 
 The old local demo fallback (`admin` / `admin123`) is disabled unless
 `CHURNGUARD_ENABLE_DEFAULT_ADMIN=true` is explicitly set.
@@ -276,7 +285,8 @@ This release is designed to look and behave like a real internal company tool:
 - High-risk customer export for retention outreach
 - Learning queue for labeled company rows
 - Admin summary cards for prediction volume, high-risk accounts, uploads, queued learning rows, and model metrics
-- Local SQLite pilot store for product history
+- SQLAlchemy storage layer with local SQLite and Neon/Postgres support
+- Database-backed app users with bcrypt password hashes
 - Workspace-aware sessions with `company_id` and role claims
 - Tenant-scoped prediction, upload, learning, and admin-summary records
 - Workspace member tracking for owner/analyst/viewer readiness
@@ -286,12 +296,13 @@ This release is designed to look and behave like a real internal company tool:
 
 The next engineering milestone is to move the workspace-aware pilot foundation onto production-grade data services:
 
-1. Add Neon Postgres and migrate the current SQLite-shaped tables.
-2. Move users from local JSON into Postgres with hashed passwords and explicit workspace memberships.
-3. Add admin-created company onboarding instead of environment-variable workspace setup.
-4. Add upload validation reports so company CSV errors are clear before scoring.
-5. Add deployment smoke tests for protected APIs, database connection, and dashboard loading.
-6. Add basic audit logs for login, upload, prediction, export, and learning-row review events.
+1. Provision Neon Postgres and set `DATABASE_URL` locally and in Vercel.
+2. Run the app once so SQLAlchemy creates the production tables.
+3. Seed your owner account into Postgres using the existing admin environment credentials.
+4. Add admin-created company onboarding instead of environment-variable workspace setup.
+5. Add upload validation reports so company CSV errors are clear before scoring.
+6. Add deployment smoke tests for protected APIs, database connection, and dashboard loading.
+7. Add basic audit logs for login, upload, prediction, export, and learning-row review events.
 
 ### ML Upgrade Track
 

@@ -1,19 +1,37 @@
 """
 Product storage helpers for ChurnGuard.
 
-This module keeps the pilot app useful without requiring paid infrastructure:
-SQLite is the default local store, while the tables mirror the entities we will
-move into Postgres/Neon when the first real company uploads arrive.
+SQLAlchemy lets the same application use free local SQLite during development
+and Neon/Postgres in production by setting DATABASE_URL.
 """
 
 from __future__ import annotations
 
 from contextlib import contextmanager
+from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
-import sqlite3
 from typing import Iterable
+
+from sqlalchemy import (
+    Column,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    MetaData,
+    String,
+    Table,
+    Text,
+    UniqueConstraint,
+    case,
+    create_engine,
+    func,
+    select,
+    update,
+)
+from sqlalchemy.engine import Engine
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_COMPANY_ID = "default"
@@ -24,129 +42,205 @@ DEFAULT_DB_PATH = (
     else ROOT / "data" / "churnguard.sqlite3"
 )
 
+metadata = MetaData()
+
+companies = Table(
+    "companies",
+    metadata,
+    Column("id", String(80), primary_key=True),
+    Column("name", String(200), nullable=False),
+    Column("plan", String(40), nullable=False, default="pilot"),
+    Column("status", String(40), nullable=False, default="active"),
+    Column("created_at", DateTime(timezone=True), nullable=False, default=lambda: _now()),
+)
+
+app_users = Table(
+    "app_users",
+    metadata,
+    Column("username", String(80), primary_key=True),
+    Column("email", String(255), nullable=False, default=""),
+    Column("password_hash", String(255), nullable=False),
+    Column("company_id", String(80), ForeignKey("companies.id"), nullable=False),
+    Column("role", String(40), nullable=False, default="analyst"),
+    Column("created_at", DateTime(timezone=True), nullable=False, default=lambda: _now()),
+    Column("last_login_at", DateTime(timezone=True)),
+)
+
+workspace_members = Table(
+    "workspace_members",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("company_id", String(80), ForeignKey("companies.id"), nullable=False),
+    Column("username", String(80), nullable=False),
+    Column("email", String(255), nullable=False, default=""),
+    Column("role", String(40), nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False, default=lambda: _now()),
+    Column("last_seen_at", DateTime(timezone=True)),
+    UniqueConstraint("company_id", "username", name="uq_workspace_member"),
+)
+
+prediction_events = Table(
+    "prediction_events",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("company_id", String(80), ForeignKey("companies.id"), nullable=False),
+    Column("username", String(80), nullable=False),
+    Column("customer_id", String(160), nullable=False),
+    Column("churn_probability", Float, nullable=False),
+    Column("risk_level", String(40), nullable=False),
+    Column("model_version", String(80), nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False, default=lambda: _now()),
+)
+
+upload_batches = Table(
+    "upload_batches",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("company_id", String(80), ForeignKey("companies.id"), nullable=False),
+    Column("username", String(80), nullable=False),
+    Column("source_file", String(255), nullable=False),
+    Column("upload_type", String(40), nullable=False),
+    Column("row_count", Integer, nullable=False),
+    Column("high_risk_count", Integer, nullable=False, default=0),
+    Column("accepted_rows", Integer, nullable=False, default=0),
+    Column("created_at", DateTime(timezone=True), nullable=False, default=lambda: _now()),
+)
+
+learning_rows = Table(
+    "learning_rows",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("batch_id", Integer, ForeignKey("upload_batches.id"), nullable=False),
+    Column("company_id", String(80), ForeignKey("companies.id"), nullable=False),
+    Column("customer_id", String(160), nullable=False),
+    Column("churn", String(20), nullable=False),
+    Column("status", String(60), nullable=False, default="queued"),
+    Column("row_json", Text, nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False, default=lambda: _now()),
+)
+
+_ENGINE: Engine | None = None
+_ENGINE_KEY: str | None = None
+
+
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def database_url() -> str:
+    configured = os.getenv("DATABASE_URL")
+    if configured:
+        if configured.startswith("postgres://"):
+            return configured.replace("postgres://", "postgresql+psycopg://", 1)
+        if configured.startswith("postgresql://"):
+            return configured.replace("postgresql://", "postgresql+psycopg://", 1)
+        return configured
+    return f"sqlite:///{storage_path()}"
+
 
 def storage_path() -> Path:
     return Path(os.getenv("CHURNGUARD_DB_PATH", str(DEFAULT_DB_PATH)))
 
 
 def storage_backend() -> str:
-    if os.getenv("DATABASE_URL"):
-        return "sqlite pilot store; DATABASE_URL configured for upcoming Postgres migration"
-    return "sqlite pilot store"
+    if database_url().startswith("postgresql+psycopg://"):
+        return "postgres"
+    return "sqlite local store"
 
 
-def _columns(connection: sqlite3.Connection, table: str) -> set[str]:
-    return {
-        row["name"]
-        for row in connection.execute(f"PRAGMA table_info({table})").fetchall()
-    }
-
-
-def _add_column_if_missing(
-    connection: sqlite3.Connection,
-    table: str,
-    column: str,
-    definition: str,
-) -> None:
-    if column not in _columns(connection, table):
-        connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+def engine() -> Engine:
+    global _ENGINE, _ENGINE_KEY
+    key = database_url()
+    if _ENGINE is None or _ENGINE_KEY != key:
+        if key.startswith("sqlite:///"):
+            storage_path().parent.mkdir(parents=True, exist_ok=True)
+        _ENGINE = create_engine(key, future=True, pool_pre_ping=True)
+        _ENGINE_KEY = key
+    return _ENGINE
 
 
 @contextmanager
 def _connect():
-    path = storage_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    connection = sqlite3.connect(path)
-    connection.row_factory = sqlite3.Row
-    try:
+    with engine().begin() as connection:
         yield connection
-        connection.commit()
-    finally:
-        connection.close()
 
 
 def init_storage() -> None:
-    with _connect() as connection:
-        connection.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS companies (
-                id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                plan TEXT NOT NULL DEFAULT 'pilot',
-                status TEXT NOT NULL DEFAULT 'active',
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-            );
-
-            CREATE TABLE IF NOT EXISTS workspace_members (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                company_id TEXT NOT NULL,
-                username TEXT NOT NULL,
-                email TEXT NOT NULL DEFAULT '',
-                role TEXT NOT NULL,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                last_seen_at TEXT,
-                UNIQUE(company_id, username),
-                FOREIGN KEY (company_id) REFERENCES companies(id)
-            );
-
-            CREATE TABLE IF NOT EXISTS prediction_events (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                company_id TEXT NOT NULL,
-                username TEXT NOT NULL,
-                customer_id TEXT NOT NULL,
-                churn_probability REAL NOT NULL,
-                risk_level TEXT NOT NULL,
-                model_version TEXT NOT NULL,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (company_id) REFERENCES companies(id)
-            );
-
-            CREATE TABLE IF NOT EXISTS upload_batches (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                company_id TEXT NOT NULL,
-                username TEXT NOT NULL,
-                source_file TEXT NOT NULL,
-                upload_type TEXT NOT NULL,
-                row_count INTEGER NOT NULL,
-                high_risk_count INTEGER NOT NULL DEFAULT 0,
-                accepted_rows INTEGER NOT NULL DEFAULT 0,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (company_id) REFERENCES companies(id)
-            );
-
-            CREATE TABLE IF NOT EXISTS learning_rows (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                batch_id INTEGER NOT NULL,
-                company_id TEXT NOT NULL,
-                customer_id TEXT NOT NULL,
-                churn TEXT NOT NULL,
-                status TEXT NOT NULL DEFAULT 'queued',
-                row_json TEXT NOT NULL,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (batch_id) REFERENCES upload_batches(id),
-                FOREIGN KEY (company_id) REFERENCES companies(id)
-            );
-            """
-        )
-        _add_column_if_missing(connection, "companies", "plan", "TEXT NOT NULL DEFAULT 'pilot'")
-        _add_column_if_missing(connection, "companies", "status", "TEXT NOT NULL DEFAULT 'active'")
-        connection.execute(
-            "INSERT OR IGNORE INTO companies (id, name) VALUES (?, ?)",
-            (DEFAULT_COMPANY_ID, DEFAULT_COMPANY_NAME),
-        )
+    metadata.create_all(engine())
+    ensure_company(DEFAULT_COMPANY_ID, DEFAULT_COMPANY_NAME)
 
 
 def ensure_company(company_id: str, name: str | None = None) -> None:
+    metadata.create_all(engine())
+    with _connect() as connection:
+        existing = connection.execute(
+            select(companies.c.id).where(companies.c.id == company_id)
+        ).first()
+        if existing:
+            connection.execute(
+                update(companies)
+                .where(companies.c.id == company_id)
+                .values(name=name or DEFAULT_COMPANY_NAME)
+            )
+        else:
+            connection.execute(
+                companies.insert().values(
+                    id=company_id,
+                    name=name or DEFAULT_COMPANY_NAME,
+                    plan="pilot",
+                    status="active",
+                    created_at=_now(),
+                )
+            )
+
+
+def create_db_user(user: dict) -> None:
+    init_storage()
+    ensure_company(user["company_id"], user.get("company_name") or DEFAULT_COMPANY_NAME)
+    with _connect() as connection:
+        existing = connection.execute(
+            select(app_users.c.username).where(app_users.c.username == user["username"])
+        ).first()
+        if existing:
+            raise ValueError("That username is already taken.")
+        email_exists = connection.execute(
+            select(app_users.c.username).where(app_users.c.email == user["email"])
+        ).first()
+        if email_exists:
+            raise ValueError("An account with that email already exists.")
+        connection.execute(
+            app_users.insert().values(
+                username=user["username"],
+                email=user["email"],
+                password_hash=user["password_hash"],
+                company_id=user["company_id"],
+                role=user["role"],
+                created_at=_now(),
+            )
+        )
+    upsert_workspace_member(
+        company_id=user["company_id"],
+        username=user["username"],
+        email=user["email"],
+        role=user["role"],
+        company_name=user.get("company_name") or DEFAULT_COMPANY_NAME,
+    )
+
+
+def get_db_user(username: str) -> dict | None:
     init_storage()
     with _connect() as connection:
+        row = connection.execute(
+            select(app_users).where(app_users.c.username == username)
+        ).mappings().first()
+        if row is None:
+            return None
         connection.execute(
-            """
-            INSERT INTO companies (id, name)
-            VALUES (?, ?)
-            ON CONFLICT(id) DO UPDATE SET name = excluded.name
-            """,
-            (company_id, name or DEFAULT_COMPANY_NAME),
+            update(app_users)
+            .where(app_users.c.username == username)
+            .values(last_login_at=_now())
         )
+    return dict(row)
 
 
 def upsert_workspace_member(
@@ -159,38 +253,51 @@ def upsert_workspace_member(
 ) -> None:
     ensure_company(company_id, company_name)
     with _connect() as connection:
-        connection.execute(
-            """
-            INSERT INTO workspace_members (company_id, username, email, role, last_seen_at)
-            VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
-            ON CONFLICT(company_id, username)
-            DO UPDATE SET
-                email = excluded.email,
-                role = excluded.role,
-                last_seen_at = CURRENT_TIMESTAMP
-            """,
-            (company_id, username, email, role),
-        )
+        existing = connection.execute(
+            select(workspace_members.c.id).where(
+                workspace_members.c.company_id == company_id,
+                workspace_members.c.username == username,
+            )
+        ).first()
+        values = {
+            "email": email,
+            "role": role,
+            "last_seen_at": _now(),
+        }
+        if existing:
+            connection.execute(
+                update(workspace_members)
+                .where(workspace_members.c.id == existing.id)
+                .values(**values)
+            )
+        else:
+            connection.execute(
+                workspace_members.insert().values(
+                    company_id=company_id,
+                    username=username,
+                    created_at=_now(),
+                    **values,
+                )
+            )
 
 
 def workspace_overview(company_id: str) -> dict:
     init_storage()
     with _connect() as connection:
         company = connection.execute(
-            "SELECT id, name, plan, status, created_at FROM companies WHERE id = ?",
-            (company_id,),
-        ).fetchone()
+            select(companies).where(companies.c.id == company_id)
+        ).mappings().first()
         members = connection.execute(
-            """
-            SELECT username, email, role, created_at, last_seen_at
-            FROM workspace_members
-            WHERE company_id = ?
-            ORDER BY
-                CASE role WHEN 'owner' THEN 0 WHEN 'analyst' THEN 1 ELSE 2 END,
-                username
-            """,
-            (company_id,),
-        ).fetchall()
+            select(
+                workspace_members.c.username,
+                workspace_members.c.email,
+                workspace_members.c.role,
+                workspace_members.c.created_at,
+                workspace_members.c.last_seen_at,
+            )
+            .where(workspace_members.c.company_id == company_id)
+            .order_by(workspace_members.c.role, workspace_members.c.username)
+        ).mappings().all()
 
     if company is None:
         return {
@@ -206,8 +313,16 @@ def workspace_overview(company_id: str) -> dict:
         "company_name": company["name"],
         "plan": company["plan"],
         "status": company["status"],
-        "members": [dict(member) for member in members],
+        "members": [_serialize_member(member) for member in members],
     }
+
+
+def _serialize_member(member) -> dict:
+    data = dict(member)
+    for key in ("created_at", "last_seen_at"):
+        if isinstance(data.get(key), datetime):
+            data[key] = data[key].isoformat()
+    return data
 
 
 def record_prediction_event(
@@ -222,13 +337,15 @@ def record_prediction_event(
     init_storage()
     with _connect() as connection:
         connection.execute(
-            """
-            INSERT INTO prediction_events (
-                company_id, username, customer_id, churn_probability, risk_level, model_version
+            prediction_events.insert().values(
+                company_id=company_id,
+                username=username,
+                customer_id=customer_id,
+                churn_probability=churn_probability,
+                risk_level=risk_level,
+                model_version=model_version,
+                created_at=_now(),
             )
-            VALUES (?, ?, ?, ?, ?, ?)
-            """,
-            (company_id, username, customer_id, churn_probability, risk_level, model_version),
         )
 
 
@@ -244,24 +361,19 @@ def record_upload_batch(
 ) -> int:
     init_storage()
     with _connect() as connection:
-        cursor = connection.execute(
-            """
-            INSERT INTO upload_batches (
-                company_id, username, source_file, upload_type, row_count, high_risk_count, accepted_rows
+        result = connection.execute(
+            upload_batches.insert().values(
+                company_id=company_id,
+                username=username,
+                source_file=source_file,
+                upload_type=upload_type,
+                row_count=row_count,
+                high_risk_count=high_risk_count,
+                accepted_rows=accepted_rows,
+                created_at=_now(),
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                company_id,
-                username,
-                source_file,
-                upload_type,
-                row_count,
-                high_risk_count,
-                accepted_rows,
-            ),
         )
-        return int(cursor.lastrowid)
+        return int(result.inserted_primary_key[0])
 
 
 def record_learning_rows(
@@ -272,26 +384,22 @@ def record_learning_rows(
 ) -> None:
     init_storage()
     payload = [
-        (
-            batch_id,
-            company_id,
-            str(row.get("customerID") or row.get("customer_id") or "UNKNOWN"),
-            str(row.get("Churn")),
-            json.dumps(row, default=str, sort_keys=True),
-        )
+        {
+            "batch_id": batch_id,
+            "company_id": company_id,
+            "customer_id": str(row.get("customerID") or row.get("customer_id") or "UNKNOWN"),
+            "churn": str(row.get("Churn")),
+            "status": "queued",
+            "row_json": json.dumps(row, default=str, sort_keys=True),
+            "created_at": _now(),
+        }
         for row in rows
     ]
     if not payload:
         return
 
     with _connect() as connection:
-        connection.executemany(
-            """
-            INSERT INTO learning_rows (batch_id, company_id, customer_id, churn, row_json)
-            VALUES (?, ?, ?, ?, ?)
-            """,
-            payload,
-        )
+        connection.execute(learning_rows.insert(), payload)
 
 
 def admin_summary(
@@ -304,47 +412,43 @@ def admin_summary(
     init_storage()
     with _connect() as connection:
         company = connection.execute(
-            "SELECT name FROM companies WHERE id = ?",
-            (company_id,),
-        ).fetchone()
+            select(companies.c.name).where(companies.c.id == company_id)
+        ).first()
         totals = connection.execute(
-            """
-            SELECT
-                COUNT(*) AS total_predictions,
-                SUM(CASE WHEN risk_level = 'High' THEN 1 ELSE 0 END) AS high_risk_predictions
-            FROM prediction_events
-            WHERE company_id = ?
-            """,
-            (company_id,),
-        ).fetchone()
+            select(
+                func.count(prediction_events.c.id).label("total_predictions"),
+                func.sum(
+                    case((prediction_events.c.risk_level == "High", 1), else_=0)
+                ).label("high_risk_predictions"),
+            ).where(prediction_events.c.company_id == company_id)
+        ).mappings().first()
         uploads = connection.execute(
-            """
-            SELECT
-                COUNT(*) AS csv_upload_batches,
-                MAX(created_at) AS latest_upload_at
-            FROM upload_batches
-            WHERE company_id = ?
-            """,
-            (company_id,),
-        ).fetchone()
+            select(
+                func.count(upload_batches.c.id).label("csv_upload_batches"),
+                func.max(upload_batches.c.created_at).label("latest_upload_at"),
+            ).where(upload_batches.c.company_id == company_id)
+        ).mappings().first()
         learning = connection.execute(
-            """
-            SELECT COUNT(*) AS learning_rows_queued
-            FROM learning_rows
-            WHERE company_id = ? AND status = 'queued'
-            """,
-            (company_id,),
-        ).fetchone()
+            select(func.count(learning_rows.c.id).label("learning_rows_queued")).where(
+                learning_rows.c.company_id == company_id,
+                learning_rows.c.status == "queued",
+            )
+        ).mappings().first()
 
     queued = int(learning["learning_rows_queued"] or 0)
+    latest_upload_at = uploads["latest_upload_at"]
     return {
         "storage_backend": storage_backend(),
-        "company_name": company["name"] if company else DEFAULT_COMPANY_NAME,
+        "company_name": company.name if company else DEFAULT_COMPANY_NAME,
         "total_predictions": int(totals["total_predictions"] or 0),
         "high_risk_predictions": int(totals["high_risk_predictions"] or 0),
         "csv_upload_batches": int(uploads["csv_upload_batches"] or 0),
         "learning_rows_queued": queued,
-        "latest_upload_at": uploads["latest_upload_at"],
+        "latest_upload_at": (
+            latest_upload_at.isoformat()
+            if isinstance(latest_upload_at, datetime)
+            else latest_upload_at
+        ),
         "model_type": model_type,
         "model_version": model_version,
         "model_auc": model_auc,

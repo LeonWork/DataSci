@@ -29,6 +29,7 @@ USER_STORE_PATH = (
     if os.getenv("VERCEL")
     else ROOT / "data" / "app_users.json"
 )
+LEGACY_JSON_AUTH = "CHURNGUARD_USE_LEGACY_JSON_USERS"
 USERNAME_PATTERN = re.compile(r"^[a-zA-Z0-9_.-]{3,32}$")
 DEFAULT_AUTH_USERNAME = "admin"
 DEFAULT_AUTH_PASSWORD_HASH = b"$2b$12$amCWoXmqjip9GRVhRnmNJ.DBvO1ayDKDMK7aOceeiXAXP4kWdmS4m"
@@ -101,6 +102,10 @@ def signup_requires_invite() -> bool:
 
 def signup_enabled() -> bool:
     return truthy_setting("CHURNGUARD_ENABLE_SIGNUP") or signup_requires_invite()
+
+
+def use_legacy_json_users() -> bool:
+    return truthy_setting(LEGACY_JSON_AUTH)
 
 
 def _session_secret() -> bytes:
@@ -194,27 +199,42 @@ def create_user(
     if password != confirm_password:
         return False, "Passwords do not match.", None
 
-    users = load_users()
-    if username_key in users:
-        return False, "That username is already taken.", None
-    if any(user.get("email") == email for user in users.values()):
-        return False, "An account with that email already exists.", None
-
     user = {
         "username": username_key,
         "email": email,
         "company_id": normalize_company_id(None),
+        "company_name": company_name(),
         "role": normalize_role(auth_setting("CHURNGUARD_SIGNUP_ROLE"), default="analyst"),
         "password_hash": hash_password(password),
     }
-    users[username_key] = user
-    save_users(users)
+
+    if use_legacy_json_users():
+        users = load_users()
+        if username_key in users:
+            return False, "That username is already taken.", None
+        if any(user.get("email") == email for user in users.values()):
+            return False, "An account with that email already exists.", None
+        users[username_key] = user
+        save_users(users)
+        return True, "Account created.", user
+
+    from src.api.storage import create_db_user
+
+    try:
+        create_db_user(user)
+    except ValueError as exc:
+        return False, str(exc), None
     return True, "Account created.", user
 
 
 def authenticate_user(username: str, password: str) -> dict | None:
     username_key = normalize_username(username)
-    user = load_users().get(username_key)
+    if use_legacy_json_users():
+        user = load_users().get(username_key)
+    else:
+        from src.api.storage import get_db_user
+
+        user = get_db_user(username_key)
     if user and verify_password(password, user["password_hash"]):
         user.setdefault("company_id", normalize_company_id(None))
         user.setdefault("role", "analyst")
