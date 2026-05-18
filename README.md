@@ -290,24 +290,23 @@ This release is designed to look and behave like a real internal company tool:
 - Workspace-aware sessions with `company_id` and role claims
 - Tenant-scoped prediction, upload, learning, and admin-summary records
 - Workspace member tracking for owner/analyst/viewer readiness
+- CSV validation reports with row-level errors for scoring and learning uploads
 - Corrected model documentation for the current RandomForestClassifier artifact
 
 ### Immediate Next Steps
 
-The app is already Postgres-ready, but the best next coding step before creating
-the Neon account is upload validation and error reporting. That gives companies
-a much better first experience when they upload messy CSV exports.
+The app is Postgres-ready and now has upload validation/error reporting. The next
+step is to create the Neon database and connect it to local/Vercel environments.
 
 Recommended order:
 
-1. Build CSV validation/error reports for scoring and learning uploads.
-2. Create a Neon Postgres project.
-3. Set `DATABASE_URL` locally and in Vercel.
-4. Run the app once so SQLAlchemy creates the production tables.
-5. Seed your owner account into Postgres using the existing admin environment credentials.
-6. Add admin-created company onboarding instead of environment-variable workspace setup.
-7. Add deployment smoke tests for protected APIs, database connection, and dashboard loading.
-8. Add basic audit logs for login, upload, prediction, export, and learning-row review events.
+1. Create a Neon Postgres project.
+2. Set `DATABASE_URL` locally and in Vercel.
+3. Run the app once so SQLAlchemy creates the production tables.
+4. Seed your owner account into Postgres using the existing admin environment credentials.
+5. Add admin-created company onboarding instead of environment-variable workspace setup.
+6. Add deployment smoke tests for protected APIs, database connection, and dashboard loading.
+7. Add basic audit logs for login, upload, prediction, export, and learning-row review events.
 
 ### Neon Setup Checklist
 

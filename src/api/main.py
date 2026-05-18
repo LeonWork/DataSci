@@ -85,6 +85,7 @@ BATCH_REQUIRED_COLS = [
     "MonthlyCharges", "TotalCharges",
 ]
 LEARNING_MAX_ROWS = 5000
+SCORING_MAX_ROWS = 500
 CHURN_VALUE_MAP = {
     "yes": "Yes",
     "y": "Yes",
@@ -94,6 +95,34 @@ CHURN_VALUE_MAP = {
     "n": "No",
     "false": "No",
     "0": "No",
+}
+CSV_ALLOWED_VALUES = {
+    "gender": {"Male", "Female"},
+    "SeniorCitizen": {"Yes", "No"},
+    "Partner": {"Yes", "No"},
+    "Dependents": {"Yes", "No"},
+    "PhoneService": {"Yes", "No"},
+    "MultipleLines": {"Yes", "No", "No phone service"},
+    "InternetService": {"DSL", "Fiber optic", "No"},
+    "OnlineSecurity": {"Yes", "No", "No internet service"},
+    "OnlineBackup": {"Yes", "No", "No internet service"},
+    "DeviceProtection": {"Yes", "No", "No internet service"},
+    "TechSupport": {"Yes", "No", "No internet service"},
+    "StreamingTV": {"Yes", "No", "No internet service"},
+    "StreamingMovies": {"Yes", "No", "No internet service"},
+    "Contract": {"Month-to-month", "One year", "Two year"},
+    "PaperlessBilling": {"Yes", "No"},
+    "PaymentMethod": {
+        "Electronic check",
+        "Mailed check",
+        "Bank transfer (automatic)",
+        "Credit card (automatic)",
+    },
+}
+CSV_NUMERIC_RANGES = {
+    "tenure": (0, 72),
+    "MonthlyCharges": (0, 999),
+    "TotalCharges": (0, None),
 }
 
 
@@ -199,6 +228,119 @@ def _validate_customer_columns(df: pd.DataFrame) -> None:
     missing = [column for column in BATCH_REQUIRED_COLS if column not in df.columns]
     if missing:
         raise HTTPException(status_code=400, detail=f"CSV is missing required columns: {missing}")
+
+
+def _csv_issue(row: int | None, column: str, code: str, message: str) -> dict:
+    return {
+        "row": row,
+        "column": column,
+        "code": code,
+        "message": message,
+    }
+
+
+def _raise_csv_validation_error(issues: list[dict]) -> None:
+    preview = issues[:50]
+    raise HTTPException(
+        status_code=400,
+        detail={
+            "message": "CSV validation failed. Fix the listed issues and upload again.",
+            "errors": preview,
+            "error_count": len(issues),
+            "truncated": len(issues) > len(preview),
+        },
+    )
+
+
+def _validate_customer_csv(df: pd.DataFrame, *, require_churn: bool, max_rows: int) -> pd.DataFrame:
+    issues: list[dict] = []
+    if df.empty:
+        issues.append(_csv_issue(None, "file", "empty_csv", "CSV has headers but no customer rows."))
+    if len(df) > max_rows:
+        issues.append(
+            _csv_issue(
+                None,
+                "file",
+                "too_many_rows",
+                f"CSV has {len(df)} rows. Limit this upload to {max_rows} rows.",
+            )
+        )
+
+    required_columns = BATCH_REQUIRED_COLS + (["Churn"] if require_churn else [])
+    missing = [column for column in required_columns if column not in df.columns]
+    for column in missing:
+        issues.append(
+            _csv_issue(
+                None,
+                column,
+                "missing_column",
+                f"Add the required `{column}` column.",
+            )
+        )
+    if issues:
+        _raise_csv_validation_error(issues)
+
+    validated = df.copy()
+    for column, allowed in CSV_ALLOWED_VALUES.items():
+        values = validated[column]
+        blank_mask = values.isna() | values.astype(str).str.strip().eq("")
+        for index in values[blank_mask].index[:10]:
+            issues.append(
+                _csv_issue(
+                    int(index) + 2,
+                    column,
+                    "blank_value",
+                    f"`{column}` cannot be blank.",
+                )
+            )
+        invalid_mask = ~blank_mask & ~values.astype(str).isin(allowed)
+        invalid_values = values[invalid_mask]
+        for index, value in invalid_values.head(10).items():
+            issues.append(
+                _csv_issue(
+                    int(index) + 2,
+                    column,
+                    "invalid_value",
+                    f"`{value}` is not valid. Use one of: {', '.join(sorted(allowed))}.",
+                )
+            )
+
+    for column, (minimum, maximum) in CSV_NUMERIC_RANGES.items():
+        numeric = pd.to_numeric(validated[column], errors="coerce")
+        blank_mask = validated[column].isna() | validated[column].astype(str).str.strip().eq("")
+        invalid_mask = numeric.isna() | (numeric < minimum)
+        if maximum is not None:
+            invalid_mask = invalid_mask | (numeric > maximum)
+        invalid_mask = invalid_mask | blank_mask
+        range_label = f"{minimum} or greater" if maximum is None else f"{minimum} to {maximum}"
+        for index, value in validated.loc[invalid_mask, column].head(10).items():
+            issues.append(
+                _csv_issue(
+                    int(index) + 2,
+                    column,
+                    "invalid_number",
+                    f"`{value}` is not valid. Use a number from {range_label}.",
+                )
+            )
+        validated[column] = numeric
+
+    if require_churn:
+        normalized = validated["Churn"].map(lambda value: CHURN_VALUE_MAP.get(str(value).strip().lower()))
+        invalid_mask = normalized.isna()
+        for index, value in validated.loc[invalid_mask, "Churn"].head(10).items():
+            issues.append(
+                _csv_issue(
+                    int(index) + 2,
+                    "Churn",
+                    "invalid_churn",
+                    f"`{value}` is not valid. Use Yes or No.",
+                )
+            )
+        validated["Churn"] = normalized
+
+    if issues:
+        _raise_csv_validation_error(issues)
+    return validated
 
 
 def _normalize_churn_values(values: pd.Series) -> pd.Series:
@@ -416,9 +558,7 @@ async def predict_csv(
     """Score a customer CSV using the current model."""
     _require_model()
     raw = await _read_csv_upload(file)
-    _validate_customer_columns(raw)
-    if len(raw) > 500:
-        raise HTTPException(status_code=400, detail="CSV scoring is limited to 500 rows per upload.")
+    raw = _validate_customer_csv(raw, require_churn=False, max_rows=SCORING_MAX_ROWS)
 
     rows = []
     for index, record in raw.iterrows():
@@ -468,21 +608,10 @@ async def upload_learning_csv(
     The file must include the normal customer columns plus a Churn column.
     """
     raw = await _read_csv_upload(file)
-    _validate_customer_columns(raw)
-    if "Churn" not in raw.columns:
-        raise HTTPException(
-            status_code=400,
-            detail="Learning uploads need a Churn column with known Yes/No outcomes.",
-        )
-    if len(raw) > LEARNING_MAX_ROWS:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Learning uploads are limited to {LEARNING_MAX_ROWS} rows per file.",
-        )
+    raw = _validate_customer_csv(raw, require_churn=True, max_rows=LEARNING_MAX_ROWS)
 
     stored_columns = (["customerID"] if "customerID" in raw.columns else []) + BATCH_REQUIRED_COLS + ["Churn"]
     accepted = raw[stored_columns].copy()
-    accepted["Churn"] = _normalize_churn_values(accepted["Churn"])
     accepted["source_file"] = file.filename
     accepted["uploaded_at"] = pd.Timestamp.utcnow().isoformat()
 

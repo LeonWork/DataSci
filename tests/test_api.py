@@ -234,6 +234,12 @@ def _scoring_csv() -> bytes:
     return (",".join(headers) + "\n" + line + "\n").encode()
 
 
+def _csv_from_row(row: dict) -> bytes:
+    headers = list(row.keys())
+    line = ",".join(str(row[key]) for key in headers)
+    return (",".join(headers) + "\n" + line + "\n").encode()
+
+
 class TestAdminSummary:
     def test_summary_starts_with_zero_counts(self, client):
         resp = client.get("/admin/summary")
@@ -262,6 +268,34 @@ class TestAdminSummary:
         assert body["total_predictions"] == 1
         assert body["csv_upload_batches"] == 1
         assert body["latest_upload_at"] is not None
+
+    def test_csv_upload_reports_missing_columns(self, client):
+        row = {key: value for key, value in SAMPLE_CUSTOMER.items() if key != "Contract"}
+        resp = client.post(
+            "/predict-csv",
+            files={"file": ("bad.csv", BytesIO(_csv_from_row(row)), "text/csv")},
+        )
+        body = resp.json()
+        assert resp.status_code == 400
+        assert body["detail"]["message"] == "CSV validation failed. Fix the listed issues and upload again."
+        assert body["detail"]["errors"][0]["code"] == "missing_column"
+        assert body["detail"]["errors"][0]["column"] == "Contract"
+
+    def test_csv_upload_reports_invalid_values_with_row_numbers(self, client):
+        row = {
+            **SAMPLE_CUSTOMER,
+            "Contract": "Weekly",
+            "tenure": 120,
+            "MonthlyCharges": "expensive",
+        }
+        resp = client.post(
+            "/predict-csv",
+            files={"file": ("bad.csv", BytesIO(_csv_from_row(row)), "text/csv")},
+        )
+        errors = resp.json()["detail"]["errors"]
+        assert resp.status_code == 400
+        assert {error["code"] for error in errors} >= {"invalid_value", "invalid_number"}
+        assert {error["row"] for error in errors} == {2}
 
     def test_workspace_metadata_is_available(self, client):
         resp = client.get("/admin/workspace")
@@ -330,7 +364,9 @@ class TestLearningQueue:
             files={"file": ("learning.csv", BytesIO(_learning_csv("Maybe")), "text/csv")},
         )
         assert resp.status_code == 400
-        assert "Churn must contain known Yes/No outcomes" in resp.json()["detail"]
+        detail = resp.json()["detail"]
+        assert detail["errors"][0]["column"] == "Churn"
+        assert detail["errors"][0]["code"] == "invalid_churn"
 
 
 class TestAuthDefaults:

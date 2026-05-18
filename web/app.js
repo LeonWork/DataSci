@@ -174,7 +174,7 @@ async function postJson(url, body) {
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
     if (response.status === 401) clearSession();
-    throw new Error(data.detail || "Request failed.");
+    throw new Error(formatApiError(data.detail, "Request failed."));
   }
   return data;
 }
@@ -186,9 +186,40 @@ async function postFile(url, file) {
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
     if (response.status === 401) clearSession();
-    throw new Error(data.detail || "Upload failed.");
+    const error = new Error(formatApiError(data.detail, "Upload failed."));
+    error.detail = data.detail;
+    throw error;
   }
   return data;
+}
+
+function formatApiError(detail, fallback) {
+  if (!detail) return fallback;
+  if (typeof detail === "string") return detail;
+  if (detail.message) return detail.message;
+  return fallback;
+}
+
+function renderValidationErrors(container, detail) {
+  const errors = Array.isArray(detail?.errors) ? detail.errors : [];
+  if (!errors.length) {
+    container.textContent = formatApiError(detail, "Upload failed.");
+    return;
+  }
+  container.innerHTML = `
+    <div class="validation-report">
+      <strong>${detail.message || "CSV validation failed."}</strong>
+      <span>${detail.error_count || errors.length} issue${(detail.error_count || errors.length) === 1 ? "" : "s"} found${detail.truncated ? "; showing first 50" : ""}.</span>
+      <ul>
+        ${errors.map((issue) => `
+          <li>
+            <span>${issue.row ? `Row ${issue.row}` : "File"}${issue.column ? ` · ${issue.column}` : ""}</span>
+            ${issue.message}
+          </li>
+        `).join("")}
+      </ul>
+    </div>
+  `;
 }
 
 async function loadLearningStatus() {
@@ -605,7 +636,7 @@ batchCsv.addEventListener("change", async () => {
     renderBatchResults(data);
     await loadAdminSummary();
   } catch (error) {
-    batchSummary.textContent = error.message;
+    renderValidationErrors(batchSummary, error.detail || error.message);
   }
 });
 
@@ -619,7 +650,7 @@ learningCsv.addEventListener("change", async () => {
     await loadLearningStatus();
     await loadAdminSummary();
   } catch (error) {
-    learningStatus.textContent = error.message;
+    renderValidationErrors(learningStatus, error.detail || error.message);
   }
 });
 
@@ -627,7 +658,7 @@ loadDemoCsv.addEventListener("click", async () => {
   try {
     await scoreDemoCsv();
   } catch (error) {
-    batchSummary.textContent = error.message;
+    renderValidationErrors(batchSummary, error.detail || error.message);
   }
 });
 

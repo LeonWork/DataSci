@@ -745,6 +745,41 @@ legend {
   font-weight: 700;
 }
 
+.validation-report {
+  display: grid;
+  gap: 0.45rem;
+  color: #7f1d1d;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  padding: 0.75rem;
+  font-weight: 700;
+}
+
+.validation-report span {
+  color: #991b1b;
+  font-size: 0.84rem;
+}
+
+.validation-report ul {
+  display: grid;
+  gap: 0.4rem;
+  margin: 0.2rem 0 0;
+  padding-left: 1rem;
+}
+
+.validation-report li {
+  color: #344054;
+  font-size: 0.84rem;
+  font-weight: 600;
+}
+
+.validation-report li span {
+  display: block;
+  color: #7f1d1d;
+  font-weight: 800;
+}
+
 .risk-chart {
   display: grid;
   gap: 0.55rem;
