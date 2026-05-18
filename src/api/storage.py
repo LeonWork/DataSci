@@ -35,6 +35,23 @@ def storage_backend() -> str:
     return "sqlite pilot store"
 
 
+def _columns(connection: sqlite3.Connection, table: str) -> set[str]:
+    return {
+        row["name"]
+        for row in connection.execute(f"PRAGMA table_info({table})").fetchall()
+    }
+
+
+def _add_column_if_missing(
+    connection: sqlite3.Connection,
+    table: str,
+    column: str,
+    definition: str,
+) -> None:
+    if column not in _columns(connection, table):
+        connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+
 @contextmanager
 def _connect():
     path = storage_path()
@@ -55,7 +72,21 @@ def init_storage() -> None:
             CREATE TABLE IF NOT EXISTS companies (
                 id TEXT PRIMARY KEY,
                 name TEXT NOT NULL,
+                plan TEXT NOT NULL DEFAULT 'pilot',
+                status TEXT NOT NULL DEFAULT 'active',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS workspace_members (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                company_id TEXT NOT NULL,
+                username TEXT NOT NULL,
+                email TEXT NOT NULL DEFAULT '',
+                role TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                last_seen_at TEXT,
+                UNIQUE(company_id, username),
+                FOREIGN KEY (company_id) REFERENCES companies(id)
             );
 
             CREATE TABLE IF NOT EXISTS prediction_events (
@@ -97,10 +128,86 @@ def init_storage() -> None:
             );
             """
         )
+        _add_column_if_missing(connection, "companies", "plan", "TEXT NOT NULL DEFAULT 'pilot'")
+        _add_column_if_missing(connection, "companies", "status", "TEXT NOT NULL DEFAULT 'active'")
         connection.execute(
             "INSERT OR IGNORE INTO companies (id, name) VALUES (?, ?)",
             (DEFAULT_COMPANY_ID, DEFAULT_COMPANY_NAME),
         )
+
+
+def ensure_company(company_id: str, name: str | None = None) -> None:
+    init_storage()
+    with _connect() as connection:
+        connection.execute(
+            """
+            INSERT INTO companies (id, name)
+            VALUES (?, ?)
+            ON CONFLICT(id) DO UPDATE SET name = excluded.name
+            """,
+            (company_id, name or DEFAULT_COMPANY_NAME),
+        )
+
+
+def upsert_workspace_member(
+    *,
+    company_id: str,
+    username: str,
+    email: str = "",
+    role: str = "analyst",
+    company_name: str | None = None,
+) -> None:
+    ensure_company(company_id, company_name)
+    with _connect() as connection:
+        connection.execute(
+            """
+            INSERT INTO workspace_members (company_id, username, email, role, last_seen_at)
+            VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(company_id, username)
+            DO UPDATE SET
+                email = excluded.email,
+                role = excluded.role,
+                last_seen_at = CURRENT_TIMESTAMP
+            """,
+            (company_id, username, email, role),
+        )
+
+
+def workspace_overview(company_id: str) -> dict:
+    init_storage()
+    with _connect() as connection:
+        company = connection.execute(
+            "SELECT id, name, plan, status, created_at FROM companies WHERE id = ?",
+            (company_id,),
+        ).fetchone()
+        members = connection.execute(
+            """
+            SELECT username, email, role, created_at, last_seen_at
+            FROM workspace_members
+            WHERE company_id = ?
+            ORDER BY
+                CASE role WHEN 'owner' THEN 0 WHEN 'analyst' THEN 1 ELSE 2 END,
+                username
+            """,
+            (company_id,),
+        ).fetchall()
+
+    if company is None:
+        return {
+            "company_id": company_id,
+            "company_name": DEFAULT_COMPANY_NAME,
+            "plan": "pilot",
+            "status": "active",
+            "members": [],
+        }
+
+    return {
+        "company_id": company["id"],
+        "company_name": company["name"],
+        "plan": company["plan"],
+        "status": company["status"],
+        "members": [dict(member) for member in members],
+    }
 
 
 def record_prediction_event(

@@ -288,7 +288,8 @@ legend {
   white-space: nowrap;
 }
 
-#signedInUser {
+#signedInUser,
+#workspaceBadge {
   color: #344054;
   background: #eef4ff;
   border: 1px solid #c7d7fe;
@@ -296,6 +297,12 @@ legend {
   padding: 0.36rem 0.72rem;
   font-size: 0.82rem;
   font-weight: 700;
+}
+
+#workspaceBadge {
+  color: #075985;
+  background: #ecfeff;
+  border-color: #a5f3fc;
 }
 
 #logoutButton {

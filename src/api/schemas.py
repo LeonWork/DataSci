@@ -111,6 +111,8 @@ class AuthResponse(BaseModel):
     username: str
     message: str
     access_token: str | None = None
+    company_id: str | None = None
+    role: str | None = None
 
 
 class AuthConfigResponse(BaseModel):
@@ -152,3 +154,19 @@ class LearningStatusResponse(BaseModel):
     latest_uploaded_at: str | None = None
     retraining_command: str
     warning: str | None = None
+
+
+class WorkspaceMemberResponse(BaseModel):
+    username: str
+    email: str = ""
+    role: Literal["owner", "analyst", "viewer"]
+    created_at: str
+    last_seen_at: str | None = None
+
+
+class WorkspaceResponse(BaseModel):
+    company_id: str
+    company_name: str
+    plan: str
+    status: str
+    members: list[WorkspaceMemberResponse]

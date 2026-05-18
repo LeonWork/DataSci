@@ -16,7 +16,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
-from src.api.auth import authenticate_user, create_session_token, signup_enabled
+from src.api.auth import authenticate_user, create_session_token, create_session_token_for_user, signup_enabled
 from src.api.main import app
 from src.api.schemas import CustomerFeatures
 
@@ -256,6 +256,38 @@ class TestAdminSummary:
         assert body["total_predictions"] == 1
         assert body["csv_upload_batches"] == 1
         assert body["latest_upload_at"] is not None
+
+    def test_workspace_metadata_is_available(self, client):
+        resp = client.get("/admin/workspace")
+        body = resp.json()
+        assert resp.status_code == 200
+        assert body["company_id"] == "default"
+        assert body["company_name"] == "ChurnGuard Pilot"
+        assert body["members"][0]["username"] == "admin"
+        assert body["members"][0]["role"] == "owner"
+
+    def test_prediction_counts_are_tenant_isolated(self, client):
+        company_a = create_session_token_for_user({
+            "username": "owner-a",
+            "email": "a@example.com",
+            "company_id": "company-a",
+            "role": "owner",
+        })
+        company_b = create_session_token_for_user({
+            "username": "owner-b",
+            "email": "b@example.com",
+            "company_id": "company-b",
+            "role": "owner",
+        })
+
+        client.headers.update({"Authorization": f"Bearer {company_a}"})
+        assert client.post("/predict", json=SAMPLE_CUSTOMER).status_code == 200
+        assert client.get("/admin/summary").json()["total_predictions"] == 1
+
+        client.headers.update({"Authorization": f"Bearer {company_b}"})
+        body = client.get("/admin/summary").json()
+        assert body["total_predictions"] == 0
+        assert body["high_risk_predictions"] == 0
 
 
 class TestLearningQueue:

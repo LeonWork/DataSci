@@ -29,8 +29,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from src.api.auth import (
+    AuthenticatedUser,
     authenticate_user,
-    create_session_token,
+    company_name,
+    create_session_token_for_user,
     create_user,
     signup_enabled,
     signup_requires_invite,
@@ -53,6 +55,7 @@ from src.api.schemas import (
     ModelInfoResponse,
     PredictionResponse,
     SignupRequest,
+    WorkspaceResponse,
 )
 from src.api.storage import (
     admin_summary as build_admin_summary,
@@ -61,6 +64,8 @@ from src.api.storage import (
     record_prediction_event,
     record_upload_batch,
     storage_backend as product_storage_backend,
+    upsert_workspace_member,
+    workspace_overview,
 )
 from src.utils.logger import get_logger
 
@@ -155,20 +160,27 @@ def _require_model() -> None:
         )
 
 
-def _require_session(authorization: str | None = Header(default=None)) -> str:
+def _require_session(authorization: str | None = Header(default=None)) -> AuthenticatedUser:
     scheme, _, token = (authorization or "").partition(" ")
     if scheme.lower() != "bearer" or not token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Sign in to use this workspace.",
         )
-    username = verify_session_token(token)
-    if username is None:
+    session = verify_session_token(token)
+    if session is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Session expired. Sign in again.",
         )
-    return username
+    upsert_workspace_member(
+        company_id=session.company_id,
+        username=session.username,
+        email=session.email,
+        role=session.role,
+        company_name=company_name(),
+    )
+    return session
 
 
 async def _read_csv_upload(file: UploadFile) -> pd.DataFrame:
@@ -259,7 +271,7 @@ def auth_config() -> AuthConfigResponse:
 
 
 @app.get("/model-info", response_model=ModelInfoResponse, tags=["System"])
-def model_info(_: str = Depends(_require_session)) -> ModelInfoResponse:
+def model_info(_: AuthenticatedUser = Depends(_require_session)) -> ModelInfoResponse:
     """Return model metadata, feature count, and training metrics."""
     _require_model()
     return ModelInfoResponse(
@@ -272,17 +284,23 @@ def model_info(_: str = Depends(_require_session)) -> ModelInfoResponse:
 
 
 @app.get("/admin/summary", response_model=AdminSummaryResponse, tags=["Admin"])
-def admin_summary(username: str = Depends(_require_session)) -> AdminSummaryResponse:
+def admin_summary(session: AuthenticatedUser = Depends(_require_session)) -> AdminSummaryResponse:
     """Return workspace-level product metrics for the admin dashboard."""
     _require_model()
-    del username
     return AdminSummaryResponse(
         **build_admin_summary(
             model_type=type(predictor.model).__name__,
             model_version="1.0.0",
             model_auc=_model_auc(),
+            company_id=session.company_id,
         )
     )
+
+
+@app.get("/admin/workspace", response_model=WorkspaceResponse, tags=["Admin"])
+def workspace(session: AuthenticatedUser = Depends(_require_session)) -> WorkspaceResponse:
+    """Return the current workspace and its known members."""
+    return WorkspaceResponse(**workspace_overview(session.company_id))
 
 
 @app.post("/auth/signup", response_model=AuthResponse, tags=["Authentication"])
@@ -300,7 +318,9 @@ def signup(request: SignupRequest) -> AuthResponse:
         ok=True,
         username=user["username"],
         message=message,
-        access_token=create_session_token(user["username"]),
+        access_token=create_session_token_for_user(user),
+        company_id=user["company_id"],
+        role=user["role"],
     )
 
 
@@ -313,12 +333,14 @@ def login(request: LoginRequest) -> AuthResponse:
         ok=True,
         username=user["username"],
         message="Signed in.",
-        access_token=create_session_token(user["username"]),
+        access_token=create_session_token_for_user(user),
+        company_id=user["company_id"],
+        role=user["role"],
     )
 
 
 @app.post("/predict", response_model=PredictionResponse, tags=["Prediction"])
-def predict(customer: CustomerFeatures, username: str = Depends(_require_session)) -> PredictionResponse:
+def predict(customer: CustomerFeatures, session: AuthenticatedUser = Depends(_require_session)) -> PredictionResponse:
     """
     Predict churn probability for a single customer.
 
@@ -329,11 +351,12 @@ def predict(customer: CustomerFeatures, username: str = Depends(_require_session
         result = predictor.predict(customer.model_dump())
         response = _build_response(result)
         record_prediction_event(
-            username=username,
+            username=session.username,
             customer_id=response.customer_id,
             churn_probability=response.churn_probability,
             risk_level=response.risk_level,
             model_version=response.model_version,
+            company_id=session.company_id,
         )
         return response
     except Exception as exc:
@@ -348,7 +371,7 @@ def predict(customer: CustomerFeatures, username: str = Depends(_require_session
 )
 def predict_batch(
     request: BatchPredictionRequest,
-    username: str = Depends(_require_session),
+    session: AuthenticatedUser = Depends(_require_session),
 ) -> BatchPredictionResponse:
     """
     Predict churn for a batch of up to 100 customers.
@@ -370,11 +393,12 @@ def predict_batch(
     high_risk = sum(1 for p in predictions if p.risk_level == "High")
     for prediction in predictions:
         record_prediction_event(
-            username=username,
+            username=session.username,
             customer_id=prediction.customer_id,
             churn_probability=prediction.churn_probability,
             risk_level=prediction.risk_level,
             model_version=prediction.model_version,
+            company_id=session.company_id,
         )
 
     return BatchPredictionResponse(
@@ -387,7 +411,7 @@ def predict_batch(
 @app.post("/predict-csv", response_model=CsvPredictionResponse, tags=["Prediction"])
 async def predict_csv(
     file: UploadFile = File(...),
-    username: str = Depends(_require_session),
+    session: AuthenticatedUser = Depends(_require_session),
 ) -> CsvPredictionResponse:
     """Score a customer CSV using the current model."""
     _require_model()
@@ -414,19 +438,21 @@ async def predict_csv(
 
     high_risk = sum(1 for row in rows if row["risk_level"] == "High")
     record_upload_batch(
-        username=username,
+        username=session.username,
         source_file=file.filename,
         upload_type="score",
         row_count=len(rows),
         high_risk_count=high_risk,
+        company_id=session.company_id,
     )
     for row in rows:
         record_prediction_event(
-            username=username,
+            username=session.username,
             customer_id=row["customerID"],
             churn_probability=row["churn_probability"],
             risk_level=row["risk_level"],
             model_version="1.0.0",
+            company_id=session.company_id,
         )
     return CsvPredictionResponse(total=len(rows), high_risk_count=high_risk, rows=rows)
 
@@ -434,7 +460,7 @@ async def predict_csv(
 @app.post("/learning/upload", response_model=LearningUploadResponse, tags=["Learning"])
 async def upload_learning_csv(
     file: UploadFile = File(...),
-    username: str = Depends(_require_session),
+    session: AuthenticatedUser = Depends(_require_session),
 ) -> LearningUploadResponse:
     """
     Store labeled company CSV rows for future retraining.
@@ -465,13 +491,18 @@ async def upload_learning_csv(
     stored = pd.concat([existing, accepted], ignore_index=True) if not existing.empty else accepted
     stored.to_csv(FEEDBACK_PATH, index=False)
     batch_id = record_upload_batch(
-        username=username,
+        username=session.username,
         source_file=file.filename,
         upload_type="learning",
         row_count=len(raw),
         accepted_rows=len(accepted),
+        company_id=session.company_id,
     )
-    record_learning_rows(batch_id=batch_id, rows=accepted.to_dict(orient="records"))
+    record_learning_rows(
+        batch_id=batch_id,
+        rows=accepted.to_dict(orient="records"),
+        company_id=session.company_id,
+    )
 
     return LearningUploadResponse(
         ok=True,
@@ -485,7 +516,7 @@ async def upload_learning_csv(
 
 
 @app.get("/learning/status", response_model=LearningStatusResponse, tags=["Learning"])
-def learning_status(_: str = Depends(_require_session)) -> LearningStatusResponse:
+def learning_status(_: AuthenticatedUser = Depends(_require_session)) -> LearningStatusResponse:
     """Summarize labeled rows waiting for the next offline retraining run."""
     feedback = _read_feedback_store()
     if feedback.empty:

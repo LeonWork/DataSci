@@ -7,6 +7,7 @@ Small local authentication helpers for the custom web app.
 from __future__ import annotations
 
 import base64
+from dataclasses import dataclass
 import json
 import hmac
 import os
@@ -32,10 +33,34 @@ USERNAME_PATTERN = re.compile(r"^[a-zA-Z0-9_.-]{3,32}$")
 DEFAULT_AUTH_USERNAME = "admin"
 DEFAULT_AUTH_PASSWORD_HASH = b"$2b$12$amCWoXmqjip9GRVhRnmNJ.DBvO1ayDKDMK7aOceeiXAXP4kWdmS4m"
 SESSION_TTL_SECONDS = 60 * 60 * 12
+VALID_ROLES = {"owner", "analyst", "viewer"}
+
+
+@dataclass(frozen=True)
+class AuthenticatedUser:
+    username: str
+    email: str
+    company_id: str
+    role: str
 
 
 def normalize_username(username: str) -> str:
     return username.strip().lower()
+
+
+def normalize_company_id(company_id: str | None) -> str:
+    value = (company_id or auth_setting("CHURNGUARD_COMPANY_ID") or "default").strip().lower()
+    normalized = re.sub(r"[^a-z0-9_-]+", "-", value).strip("-")
+    return normalized or "default"
+
+
+def company_name() -> str:
+    return (auth_setting("CHURNGUARD_COMPANY_NAME") or "ChurnGuard Pilot").strip()
+
+
+def normalize_role(role: str | None, default: str = "analyst") -> str:
+    value = (role or default).strip().lower()
+    return value if value in VALID_ROLES else default
 
 
 def load_users() -> dict:
@@ -98,8 +123,21 @@ def _b64decode(data: str) -> bytes:
 
 
 def create_session_token(username: str) -> str:
+    user = {
+        "username": username,
+        "email": "",
+        "company_id": normalize_company_id(None),
+        "role": "owner",
+    }
+    return create_session_token_for_user(user)
+
+
+def create_session_token_for_user(user: dict) -> str:
     payload = {
-        "sub": normalize_username(username),
+        "sub": normalize_username(str(user.get("username", ""))),
+        "email": str(user.get("email", "")),
+        "company_id": normalize_company_id(str(user.get("company_id", ""))),
+        "role": normalize_role(str(user.get("role", "")), default="viewer"),
         "exp": int(time.time()) + SESSION_TTL_SECONDS,
     }
     payload_part = _b64encode(json.dumps(payload, separators=(",", ":")).encode())
@@ -107,7 +145,7 @@ def create_session_token(username: str) -> str:
     return f"{payload_part}.{_b64encode(signature)}"
 
 
-def verify_session_token(token: str) -> str | None:
+def verify_session_token(token: str) -> AuthenticatedUser | None:
     try:
         payload_part, signature_part = token.split(".", 1)
         expected = hmac.new(_session_secret(), payload_part.encode(), "sha256").digest()
@@ -123,7 +161,12 @@ def verify_session_token(token: str) -> str | None:
     username = payload.get("sub")
     if not isinstance(username, str) or not USERNAME_PATTERN.match(username):
         return None
-    return username
+    return AuthenticatedUser(
+        username=normalize_username(username),
+        email=str(payload.get("email", "")),
+        company_id=normalize_company_id(str(payload.get("company_id", ""))),
+        role=normalize_role(str(payload.get("role", "")), default="viewer"),
+    )
 
 
 def create_user(
@@ -160,6 +203,8 @@ def create_user(
     user = {
         "username": username_key,
         "email": email,
+        "company_id": normalize_company_id(None),
+        "role": normalize_role(auth_setting("CHURNGUARD_SIGNUP_ROLE"), default="analyst"),
         "password_hash": hash_password(password),
     }
     users[username_key] = user
@@ -171,6 +216,8 @@ def authenticate_user(username: str, password: str) -> dict | None:
     username_key = normalize_username(username)
     user = load_users().get(username_key)
     if user and verify_password(password, user["password_hash"]):
+        user.setdefault("company_id", normalize_company_id(None))
+        user.setdefault("role", "analyst")
         return user
 
     default_admin_enabled = truthy_setting("CHURNGUARD_ENABLE_DEFAULT_ADMIN")
@@ -190,6 +237,11 @@ def authenticate_user(username: str, password: str) -> dict | None:
         password_ok = bcrypt.checkpw(password.encode(), DEFAULT_AUTH_PASSWORD_HASH)
 
     if username_ok and password_ok:
-        return {"username": username_key, "email": ""}
+        return {
+            "username": username_key,
+            "email": "",
+            "company_id": normalize_company_id(None),
+            "role": "owner",
+        }
 
     return None

@@ -277,18 +277,21 @@ This release is designed to look and behave like a real internal company tool:
 - Learning queue for labeled company rows
 - Admin summary cards for prediction volume, high-risk accounts, uploads, queued learning rows, and model metrics
 - Local SQLite pilot store for product history
+- Workspace-aware sessions with `company_id` and role claims
+- Tenant-scoped prediction, upload, learning, and admin-summary records
+- Workspace member tracking for owner/analyst/viewer readiness
 - Corrected model documentation for the current RandomForestClassifier artifact
 
-### Next Step: SaaS Foundation
+### Next Step: Production Data Foundation
 
-The next engineering milestone is to replace the pilot-only local store with production SaaS data foundations:
+The next engineering milestone is to move the workspace-aware pilot foundation onto production-grade data services:
 
 1. Add Neon Postgres and migrate the current SQLite-shaped tables.
-2. Add first-class companies/workspaces instead of the current default pilot workspace.
-3. Move users into Postgres with roles: owner, analyst, and viewer.
-4. Enforce tenant isolation on every prediction, upload, learning row, and admin metric.
-5. Add upload validation reports so company CSV errors are clear before scoring.
-6. Add deployment smoke tests for protected APIs, database connection, and dashboard loading.
+2. Move users from local JSON into Postgres with hashed passwords and explicit workspace memberships.
+3. Add admin-created company onboarding instead of environment-variable workspace setup.
+4. Add upload validation reports so company CSV errors are clear before scoring.
+5. Add deployment smoke tests for protected APIs, database connection, and dashboard loading.
+6. Add basic audit logs for login, upload, prediction, export, and learning-row review events.
 
 ### ML Upgrade Track
 

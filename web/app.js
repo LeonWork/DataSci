@@ -7,6 +7,7 @@ const signupForm = document.querySelector("#signupForm");
 const inviteCodeField = document.querySelector("#inviteCodeField");
 const authMessage = document.querySelector("#authMessage");
 const signedInUser = document.querySelector("#signedInUser");
+const workspaceBadge = document.querySelector("#workspaceBadge");
 const logoutButton = document.querySelector("#logoutButton");
 const toggleSidebar = document.querySelector("#toggleSidebar");
 const openLab = document.querySelector("#openLab");
@@ -113,26 +114,33 @@ function setSession(username) {
   loadModelInfo();
   loadLearningStatus();
   loadAdminSummary();
+  loadWorkspace();
 }
 
-function setAuthenticatedSession(username, token) {
+function setAuthenticatedSession(username, token, companyId, role) {
   localStorage.setItem("churnguard_token", token);
   localStorage.setItem("churnguard_user", username);
+  if (companyId) localStorage.setItem("churnguard_company_id", companyId);
+  if (role) localStorage.setItem("churnguard_role", role);
   signedInUser.textContent = `Signed in as ${username}`;
   authView.classList.add("hidden");
   dashboardView.classList.remove("hidden");
   loadModelInfo();
   loadLearningStatus();
   loadAdminSummary();
+  loadWorkspace();
 }
 
 function clearSession() {
   localStorage.removeItem("churnguard_user");
   localStorage.removeItem("churnguard_token");
+  localStorage.removeItem("churnguard_company_id");
+  localStorage.removeItem("churnguard_role");
   dashboardView.classList.add("hidden");
   authView.classList.remove("hidden");
   lastBatchRows = [];
   if (exportHighRisk) exportHighRisk.disabled = true;
+  if (workspaceBadge) workspaceBadge.textContent = "";
 }
 
 function setSidebarHidden(hidden) {
@@ -214,6 +222,24 @@ async function loadAdminSummary() {
     totalPredictions.textContent = "--";
     highRiskPredictions.textContent = "--";
     queuedLearningRows.textContent = "--";
+  }
+}
+
+async function loadWorkspace() {
+  if (!workspaceBadge) return;
+  try {
+    const response = await fetch("/admin/workspace", { headers: authHeaders() });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      if (response.status === 401) clearSession();
+      throw new Error(data.detail || "Could not load workspace.");
+    }
+    const role = localStorage.getItem("churnguard_role") || "member";
+    workspaceBadge.textContent = `${data.company_name} · ${role}`;
+  } catch {
+    const companyId = localStorage.getItem("churnguard_company_id");
+    const role = localStorage.getItem("churnguard_role");
+    workspaceBadge.textContent = companyId && role ? `${companyId} · ${role}` : "";
   }
 }
 
@@ -523,7 +549,7 @@ signinForm.addEventListener("submit", async (event) => {
   authMessage.textContent = "";
   try {
     const data = await postJson("/auth/login", formToObject(signinForm));
-    setAuthenticatedSession(data.username, data.access_token);
+    setAuthenticatedSession(data.username, data.access_token, data.company_id, data.role);
   } catch (error) {
     authMessage.textContent = error.message;
   }
@@ -534,7 +560,7 @@ signupForm.addEventListener("submit", async (event) => {
   authMessage.textContent = "";
   try {
     const data = await postJson("/auth/signup", formToObject(signupForm));
-    setAuthenticatedSession(data.username, data.access_token);
+    setAuthenticatedSession(data.username, data.access_token, data.company_id, data.role);
   } catch (error) {
     authMessage.textContent = error.message;
   }
