@@ -8,6 +8,7 @@ Uses TestClient with a mocked predictor so no real model file is needed.
 
 from __future__ import annotations
 
+from io import BytesIO
 import json
 from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
@@ -15,6 +16,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
+from src.api.auth import authenticate_user, create_session_token, signup_enabled
 from src.api.main import app
 from src.api.schemas import CustomerFeatures
 
@@ -58,15 +60,18 @@ MOCK_PREDICTION = {
 
 
 @pytest.fixture()
-def client():
+def client(tmp_path, monkeypatch):
     """TestClient with predictor mocked as loaded and working."""
+    monkeypatch.setenv("CHURNGUARD_DB_PATH", str(tmp_path / "churnguard-test.sqlite3"))
     with patch("src.api.main.predictor") as mock_pred:
         mock_pred.is_loaded = True
-        mock_pred.model.__class__.__name__ = "XGBClassifier"
+        mock_pred.model.__class__.__name__ = "RandomForestClassifier"
         mock_pred.feature_names = ["tenure", "MonthlyCharges"]
-        mock_pred.training_metrics = {"roc_auc": 0.84}
+        mock_pred.training_metrics = {"roc_auc": 0.7897}
         mock_pred.predict.return_value = MOCK_PREDICTION
-        yield TestClient(app)
+        test_client = TestClient(app)
+        test_client.headers.update({"Authorization": f"Bearer {create_session_token('admin')}"})
+        yield test_client
 
 
 # ── /health ───────────────────────────────────────────────────────────────────
@@ -163,6 +168,11 @@ class TestPredict:
         resp = client.post("/predict", json=SAMPLE_CUSTOMER)
         assert resp.json()["customer_id"] == "TEST-001"
 
+    def test_requires_signed_in_session(self):
+        c = TestClient(app)
+        resp = c.post("/predict", json=SAMPLE_CUSTOMER)
+        assert resp.status_code == 401
+
 
 # ── /predict-batch ────────────────────────────────────────────────────────────
 
@@ -195,5 +205,106 @@ class TestUnloadedModel:
         with patch("src.api.main.predictor") as mock_pred:
             mock_pred.is_loaded = False
             c = TestClient(app)
+            c.headers.update({"Authorization": f"Bearer {create_session_token('admin')}"})
             resp = c.post("/predict", json=SAMPLE_CUSTOMER)
             assert resp.status_code == 503
+
+
+# ── Learning queue ────────────────────────────────────────────────────────────
+
+def _learning_csv(churn: str = "Yes") -> bytes:
+    row = {
+        **SAMPLE_CUSTOMER,
+        "Churn": churn,
+    }
+    headers = list(row.keys())
+    line = ",".join(str(row[key]) for key in headers)
+    return (",".join(headers) + "\n" + line + "\n").encode()
+
+
+def _scoring_csv() -> bytes:
+    headers = list(SAMPLE_CUSTOMER.keys())
+    line = ",".join(str(SAMPLE_CUSTOMER[key]) for key in headers)
+    return (",".join(headers) + "\n" + line + "\n").encode()
+
+
+class TestAdminSummary:
+    def test_summary_starts_with_zero_counts(self, client):
+        resp = client.get("/admin/summary")
+        body = resp.json()
+        assert resp.status_code == 200
+        assert body["total_predictions"] == 0
+        assert body["high_risk_predictions"] == 0
+        assert body["learning_rows_queued"] == 0
+        assert body["model_type"] == "RandomForestClassifier"
+        assert body["model_auc"] == 0.7897
+
+    def test_prediction_updates_summary(self, client):
+        client.post("/predict", json=SAMPLE_CUSTOMER)
+        body = client.get("/admin/summary").json()
+        assert body["total_predictions"] == 1
+        assert body["high_risk_predictions"] == 1
+
+    def test_csv_upload_updates_batches_and_predictions(self, client):
+        resp = client.post(
+            "/predict-csv",
+            files={"file": ("customers.csv", BytesIO(_scoring_csv()), "text/csv")},
+        )
+        assert resp.status_code == 200
+
+        body = client.get("/admin/summary").json()
+        assert body["total_predictions"] == 1
+        assert body["csv_upload_batches"] == 1
+        assert body["latest_upload_at"] is not None
+
+
+class TestLearningQueue:
+    def test_status_empty_queue(self, client, tmp_path, monkeypatch):
+        monkeypatch.setattr("src.api.main.FEEDBACK_PATH", tmp_path / "feedback.csv")
+        resp = client.get("/learning/status")
+        body = resp.json()
+        assert resp.status_code == 200
+        assert body["stored_rows"] == 0
+        assert body["retraining_command"] == "python scripts/train_and_save.py"
+
+    def test_upload_stores_labeled_rows(self, client, tmp_path, monkeypatch):
+        monkeypatch.setattr("src.api.main.FEEDBACK_PATH", tmp_path / "feedback.csv")
+        resp = client.post(
+            "/learning/upload",
+            files={"file": ("learning.csv", BytesIO(_learning_csv("Yes")), "text/csv")},
+        )
+        body = resp.json()
+        assert resp.status_code == 200
+        assert body["accepted_rows"] == 1
+        assert body["stored_rows"] == 1
+
+        status = client.get("/learning/status").json()
+        assert status["stored_rows"] == 1
+        assert status["churn_yes_count"] == 1
+        summary = client.get("/admin/summary").json()
+        assert summary["learning_rows_queued"] == 1
+        assert summary["csv_upload_batches"] == 1
+
+    def test_upload_rejects_unknown_churn_label(self, client, tmp_path, monkeypatch):
+        monkeypatch.setattr("src.api.main.FEEDBACK_PATH", tmp_path / "feedback.csv")
+        resp = client.post(
+            "/learning/upload",
+            files={"file": ("learning.csv", BytesIO(_learning_csv("Maybe")), "text/csv")},
+        )
+        assert resp.status_code == 400
+        assert "Churn must contain known Yes/No outcomes" in resp.json()["detail"]
+
+
+class TestAuthDefaults:
+    def test_default_admin_is_disabled_without_explicit_env(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("src.api.auth.USER_STORE_PATH", tmp_path / "users.json")
+        monkeypatch.delenv("CHURNGUARD_USERNAME", raising=False)
+        monkeypatch.delenv("CHURNGUARD_PASSWORD", raising=False)
+        monkeypatch.delenv("CHURNGUARD_PASSWORD_HASH", raising=False)
+        monkeypatch.delenv("CHURNGUARD_ENABLE_DEFAULT_ADMIN", raising=False)
+        assert authenticate_user("admin", "admin123") is None
+
+    def test_signup_is_disabled_without_env_or_invite(self, monkeypatch):
+        monkeypatch.delenv("CHURNGUARD_ENABLE_SIGNUP", raising=False)
+        monkeypatch.delenv("CHURNGUARD_SIGNUP_CODE", raising=False)
+        assert signup_enabled() is False

@@ -4,6 +4,7 @@ const signinTab = document.querySelector("#signinTab");
 const signupTab = document.querySelector("#signupTab");
 const signinForm = document.querySelector("#signinForm");
 const signupForm = document.querySelector("#signupForm");
+const inviteCodeField = document.querySelector("#inviteCodeField");
 const authMessage = document.querySelector("#authMessage");
 const signedInUser = document.querySelector("#signedInUser");
 const logoutButton = document.querySelector("#logoutButton");
@@ -42,8 +43,14 @@ const riskChart = document.querySelector("#riskChart");
 const batchTable = document.querySelector("#batchTable");
 const learningCsv = document.querySelector("#learningCsv");
 const learningStatus = document.querySelector("#learningStatus");
+const totalPredictions = document.querySelector("#totalPredictions");
+const highRiskPredictions = document.querySelector("#highRiskPredictions");
+const queuedLearningRows = document.querySelector("#queuedLearningRows");
+const loadDemoCsv = document.querySelector("#loadDemoCsv");
+const exportHighRisk = document.querySelector("#exportHighRisk");
 let lastCustomer = null;
 let lastPrediction = null;
+let lastBatchRows = [];
 
 const highRiskPreset = {
   gender: "Female",
@@ -103,12 +110,29 @@ function setSession(username) {
   signedInUser.textContent = `Signed in as ${username}`;
   authView.classList.add("hidden");
   dashboardView.classList.remove("hidden");
+  loadModelInfo();
+  loadLearningStatus();
+  loadAdminSummary();
+}
+
+function setAuthenticatedSession(username, token) {
+  localStorage.setItem("churnguard_token", token);
+  localStorage.setItem("churnguard_user", username);
+  signedInUser.textContent = `Signed in as ${username}`;
+  authView.classList.add("hidden");
+  dashboardView.classList.remove("hidden");
+  loadModelInfo();
+  loadLearningStatus();
+  loadAdminSummary();
 }
 
 function clearSession() {
   localStorage.removeItem("churnguard_user");
+  localStorage.removeItem("churnguard_token");
   dashboardView.classList.add("hidden");
   authView.classList.remove("hidden");
+  lastBatchRows = [];
+  if (exportHighRisk) exportHighRisk.disabled = true;
 }
 
 function setSidebarHidden(hidden) {
@@ -128,14 +152,20 @@ function formToObject(form) {
   return Object.fromEntries(new FormData(form).entries());
 }
 
+function authHeaders(extra = {}) {
+  const token = localStorage.getItem("churnguard_token");
+  return token ? { ...extra, Authorization: `Bearer ${token}` } : extra;
+}
+
 async function postJson(url, body) {
   const response = await fetch(url, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: authHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify(body),
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
+    if (response.status === 401) clearSession();
     throw new Error(data.detail || "Request failed.");
   }
   return data;
@@ -144,12 +174,67 @@ async function postJson(url, body) {
 async function postFile(url, file) {
   const body = new FormData();
   body.append("file", file);
-  const response = await fetch(url, { method: "POST", body });
+  const response = await fetch(url, { method: "POST", headers: authHeaders(), body });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
+    if (response.status === 401) clearSession();
     throw new Error(data.detail || "Upload failed.");
   }
   return data;
+}
+
+async function loadLearningStatus() {
+  if (!learningStatus) return;
+  try {
+    const response = await fetch("/learning/status", { headers: authHeaders() });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      if (response.status === 401) clearSession();
+      throw new Error(data.detail || "Could not load learning queue.");
+    }
+    learningStatus.textContent = `${data.stored_rows} labeled rows queued for retraining. Run ${data.retraining_command} after review.`;
+  } catch (error) {
+    learningStatus.textContent = error.message;
+  }
+}
+
+async function loadAdminSummary() {
+  if (!totalPredictions || !highRiskPredictions || !queuedLearningRows) return;
+  try {
+    const response = await fetch("/admin/summary", { headers: authHeaders() });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      if (response.status === 401) clearSession();
+      throw new Error(data.detail || "Could not load admin summary.");
+    }
+    totalPredictions.textContent = data.total_predictions ?? "--";
+    highRiskPredictions.textContent = data.high_risk_predictions ?? "--";
+    queuedLearningRows.textContent = data.learning_rows_queued ?? "--";
+  } catch {
+    totalPredictions.textContent = "--";
+    highRiskPredictions.textContent = "--";
+    queuedLearningRows.textContent = "--";
+  }
+}
+
+async function loadAuthConfig() {
+  try {
+    const response = await fetch("/auth/config");
+    const data = await response.json().catch(() => ({}));
+    const signupEnabled = Boolean(data.signup_enabled);
+    const inviteRequired = Boolean(data.signup_requires_invite);
+    signupTab.classList.toggle("hidden", !signupEnabled);
+    inviteCodeField.classList.toggle("hidden", !inviteRequired);
+    inviteCodeField.querySelector("input").required = inviteRequired;
+    if (!signupEnabled) {
+      setAuthMode("signin");
+      authMessage.textContent = data.message || "";
+    } else {
+      setAuthMode("signup");
+    }
+  } catch {
+    setAuthMode("signin");
+  }
 }
 
 function applyPreset(preset) {
@@ -310,6 +395,8 @@ function showFeatureDetail(featureName) {
 
 function renderBatchResults(data) {
   const rows = data.rows || [];
+  lastBatchRows = rows;
+  if (exportHighRisk) exportHighRisk.disabled = !rows.some((row) => row.risk_level === "High");
   const counts = {
     High: rows.filter((row) => row.risk_level === "High").length,
     Medium: rows.filter((row) => row.risk_level === "Medium").length,
@@ -357,10 +444,62 @@ function renderBatchResults(data) {
   `;
 }
 
+function csvEscape(value) {
+  const text = String(value ?? "");
+  return /[",\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
+}
+
+function rowsToCsv(rows) {
+  if (!rows.length) return "";
+  const headers = Object.keys(rows[0]);
+  return [
+    headers.join(","),
+    ...rows.map((row) => headers.map((header) => csvEscape(row[header])).join(",")),
+  ].join("\n");
+}
+
+function demoRows() {
+  return [
+    { customerID: "DEMO-001", ...highRiskPreset },
+    { customerID: "DEMO-002", ...lowRiskPreset },
+    { customerID: "DEMO-003", ...highRiskPreset, tenure: 7, MonthlyCharges: 94.2, TotalCharges: 659.4 },
+    { customerID: "DEMO-004", ...lowRiskPreset, tenure: 38, Contract: "One year", MonthlyCharges: 62.1, TotalCharges: 2359.8 },
+    { customerID: "DEMO-005", ...highRiskPreset, Partner: "Yes", tenure: 14, MonthlyCharges: 73.4, TotalCharges: 1027.6 },
+  ];
+}
+
+async function scoreDemoCsv() {
+  const csv = rowsToCsv(demoRows());
+  const file = new File([csv], "churnguard_demo_customers.csv", { type: "text/csv" });
+  batchSummary.textContent = "Scoring demo CSV...";
+  riskChart.innerHTML = "";
+  batchTable.innerHTML = "";
+  const data = await postFile("/predict-csv", file);
+  renderBatchResults(data);
+  await loadAdminSummary();
+}
+
+function exportHighRiskCsv() {
+  const rows = lastBatchRows.filter((row) => row.risk_level === "High");
+  if (!rows.length) return;
+  const blob = new Blob([rowsToCsv(rows)], { type: "text/csv" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "churnguard_high_risk_customers.csv";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
 async function loadModelInfo() {
   try {
-    const response = await fetch("/model-info");
-    if (!response.ok) return;
+    const response = await fetch("/model-info", { headers: authHeaders() });
+    if (!response.ok) {
+      if (response.status === 401) clearSession();
+      return;
+    }
     const data = await response.json();
     modelType.textContent = data.model_type || "Model";
     modelAuc.textContent = data.training_metrics?.roc_auc?.toFixed?.(3) || "--";
@@ -384,7 +523,7 @@ signinForm.addEventListener("submit", async (event) => {
   authMessage.textContent = "";
   try {
     const data = await postJson("/auth/login", formToObject(signinForm));
-    setSession(data.username);
+    setAuthenticatedSession(data.username, data.access_token);
   } catch (error) {
     authMessage.textContent = error.message;
   }
@@ -395,7 +534,7 @@ signupForm.addEventListener("submit", async (event) => {
   authMessage.textContent = "";
   try {
     const data = await postJson("/auth/signup", formToObject(signupForm));
-    setSession(data.username);
+    setAuthenticatedSession(data.username, data.access_token);
   } catch (error) {
     authMessage.textContent = error.message;
   }
@@ -421,6 +560,7 @@ profileForm.addEventListener("submit", async (event) => {
   try {
     const prediction = await postJson("/predict", customer);
     renderPrediction(customer, prediction);
+    await loadAdminSummary();
   } catch (error) {
     emptyState.classList.remove("hidden");
     results.classList.add("hidden");
@@ -437,6 +577,7 @@ batchCsv.addEventListener("change", async () => {
   try {
     const data = await postFile("/predict-csv", file);
     renderBatchResults(data);
+    await loadAdminSummary();
   } catch (error) {
     batchSummary.textContent = error.message;
   }
@@ -449,16 +590,29 @@ learningCsv.addEventListener("change", async () => {
   try {
     const data = await postFile("/learning/upload", file);
     learningStatus.textContent = `${data.accepted_rows} rows added to the learning queue. ${data.stored_rows} rows stored total.`;
+    await loadLearningStatus();
+    await loadAdminSummary();
   } catch (error) {
     learningStatus.textContent = error.message;
   }
 });
 
+loadDemoCsv.addEventListener("click", async () => {
+  try {
+    await scoreDemoCsv();
+  } catch (error) {
+    batchSummary.textContent = error.message;
+  }
+});
+
+exportHighRisk.addEventListener("click", exportHighRiskCsv);
+
 const existingUser = localStorage.getItem("churnguard_user");
-if (existingUser) {
+const existingToken = localStorage.getItem("churnguard_token");
+if (existingUser && existingToken) {
   setSession(existingUser);
 } else {
   clearSession();
+  loadAuthConfig();
 }
-loadModelInfo();
 setSidebarHidden(localStorage.getItem("churnguard_sidebar_hidden") === "1");

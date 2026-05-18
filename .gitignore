@@ -28,6 +28,7 @@ data/processed/*.csv
 data/processed/*.parquet
 data/app_users.json
 data/company_feedback.csv
+data/*.sqlite3
 data/external/labeled_churn/*.csv
 
 # Model artifacts (use MLflow / DVC instead)

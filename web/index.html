@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>ChurnGuard AI</title>
-    <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/styles.css?v=20260517-rail" />
   </head>
   <body>
     <main class="app">
@@ -17,23 +17,23 @@
 
         <div class="auth-card">
           <div class="segmented" role="tablist" aria-label="Authentication mode">
-            <button id="signinTab" class="active" type="button">Sign in</button>
-            <button id="signupTab" type="button">Create account</button>
+            <button id="signinTab" type="button">Sign in</button>
+            <button id="signupTab" class="active" type="button">Create account</button>
           </div>
 
-          <form id="signinForm" class="auth-form">
+          <form id="signinForm" class="auth-form hidden">
             <label>
               Username
-              <input name="username" autocomplete="username" value="admin" required />
+              <input name="username" autocomplete="username" placeholder="your.username" required />
             </label>
             <label>
               Password
-              <input name="password" type="password" autocomplete="current-password" value="admin123" required />
+              <input name="password" type="password" autocomplete="current-password" required />
             </label>
             <button type="submit">Sign in</button>
           </form>
 
-          <form id="signupForm" class="auth-form hidden">
+          <form id="signupForm" class="auth-form">
             <label>
               Username
               <input name="username" autocomplete="username" placeholder="sam.retain" required />
@@ -49,6 +49,10 @@
             <label>
               Confirm password
               <input name="confirm_password" type="password" autocomplete="new-password" minlength="8" required />
+            </label>
+            <label id="inviteCodeField" class="hidden">
+              Invite code
+              <input name="invite_code" autocomplete="one-time-code" placeholder="Workspace invite code" />
             </label>
             <button type="submit">Create account</button>
           </form>
@@ -126,9 +130,12 @@
 
           <section id="dashboardPage">
             <section class="metric-grid">
-              <article class="metric-card"><span>Model</span><strong id="modelType">XGBoost</strong><small>Tuned classifier</small></article>
+              <article class="metric-card"><span>Model</span><strong id="modelType">Random Forest</strong><small>Tuned classifier</small></article>
               <article class="metric-card"><span>Training AUC</span><strong id="modelAuc">--</strong><small>Ranking quality</small></article>
               <article class="metric-card"><span>Features</span><strong id="featureCount">--</strong><small>Engineered inputs</small></article>
+              <article class="metric-card"><span>Predictions</span><strong id="totalPredictions">--</strong><small>Workspace total</small></article>
+              <article class="metric-card"><span>High risk</span><strong id="highRiskPredictions">--</strong><small>Accounts flagged</small></article>
+              <article class="metric-card"><span>Learning rows</span><strong id="queuedLearningRows">--</strong><small>Queued for review</small></article>
             </section>
 
             <section id="emptyState" class="empty-state">
@@ -214,7 +221,14 @@
               <p class="eyebrow">Batch CSV analysis</p>
               <h2>Score a customer file</h2>
               <p class="panel-copy">Upload a CSV with the same customer columns to rank accounts by churn probability.</p>
-              <input id="batchCsv" type="file" accept=".csv" />
+              <div class="action-row">
+                <label class="file-button">
+                  Upload CSV
+                  <input id="batchCsv" type="file" accept=".csv" />
+                </label>
+                <button id="loadDemoCsv" type="button">Load demo file</button>
+                <button id="exportHighRisk" type="button" disabled>Export high-risk</button>
+              </div>
               <div id="batchSummary" class="batch-summary"></div>
               <div id="riskChart" class="risk-chart"></div>
               <div id="batchTable" class="table-wrap"></div>
@@ -275,6 +289,6 @@
       </section>
     </main>
 
-    <script src="/app.js"></script>
+    <script src="/app.js?v=20260518-saas"></script>
   </body>
 </html>

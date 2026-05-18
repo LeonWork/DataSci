@@ -102,25 +102,23 @@ jupyter lab notebooks/01_eda.ipynb
 | Layer | Tools |
 |-------|-------|
 | **Core** | Python 3.11, Pandas, NumPy, Scikit-learn |
-| **ML** | XGBoost, LightGBM, SHAP, Imbalanced-learn |
+| **ML** | Scikit-learn Random Forest, XGBoost/LightGBM comparison track, SHAP-style explanations |
 | **MLOps** | MLflow, DVC (optional) |
 | **API** | FastAPI, Pydantic, Uvicorn |
 | **Web App** | FastAPI StaticFiles, HTML, CSS, JavaScript |
 | **Infrastructure** | Docker, Docker Compose |
-| **Deployment** | Render / Railway / Hugging Face Spaces |
+| **Deployment** | Vercel-ready FastAPI/static app |
 
 ---
 
 ## 📈 Results
 
-*(Updated after Week 3)*
-
 | Model | F1-Score | ROC-AUC | Precision | Recall |
 |-------|----------|---------|-----------|--------|
-| Logistic Regression (baseline) | — | — | — | — |
-| Random Forest | — | — | — | — |
-| XGBoost | — | — | — | — |
-| **LightGBM (champion)** | — | — | — | — |
+| **RandomForestClassifier (current)** | 0.5428 | 0.7897 | 0.4611 | 0.6596 |
+| Logistic Regression (next comparison) | — | — | — | — |
+| XGBoost (next comparison) | — | — | — | — |
+| LightGBM (next comparison) | — | — | — | — |
 
 ---
 
@@ -128,8 +126,12 @@ jupyter lab notebooks/01_eda.ipynb
 
 *(Updated after Week 4)*
 
-Top churn drivers (from SHAP analysis):
-- TBD after model interpretation
+Current top churn drivers usually include:
+- Month-to-month contracts
+- Short tenure
+- Fiber optic service
+- High monthly charges
+- Missing support, security, or backup services
 
 ---
 
@@ -144,8 +146,24 @@ POST /auth/login     — Authenticate local user
 POST /predict        — Single customer churn probability
 POST /predict-csv    — Score customer CSV uploads
 POST /learning/upload — Store labeled CSV rows for future retraining
+GET  /admin/summary  — Protected admin metrics for the workspace
 GET  /health         — API health check
 ```
+
+## SaaS Pilot Architecture
+
+```mermaid
+flowchart LR
+    A["Admin user"] --> B["FastAPI app"]
+    B --> C["RandomForest model artifact"]
+    B --> D["Pilot product store"]
+    D --> E["Prediction events"]
+    D --> F["CSV upload batches"]
+    D --> G["Queued learning rows"]
+    B --> H["Static dashboard UI"]
+```
+
+The pilot now records prediction events, CSV scoring batches, and learning rows in a local SQLite product store. This is intentionally shaped like the future Postgres schema so we can move to Neon when real company uploads need durable cloud storage. Until then, local storage avoids unnecessary spending.
 
 ## 🔐 Web App Login
 
@@ -161,25 +179,42 @@ Then open:
 http://localhost:8000
 ```
 
-Development fallback credentials:
+By default the app is a private admin workspace. Configure credentials in `.env`
+or with environment variables before using the dashboard:
 
 ```text
-Username: admin
-Password: admin123
+CHURNGUARD_USERNAME="admin"
+CHURNGUARD_PASSWORD="choose-a-local-password"
+CHURNGUARD_SESSION_SECRET="choose-a-long-random-secret"
+CHURNGUARD_ENABLE_SIGNUP=false
 ```
 
-The app also supports self-service sign up. New local accounts are saved in
-`data/app_users.json` with bcrypt password hashes. That file is ignored by Git.
+For invite-only account creation, set:
 
-Override them with environment variables before starting the app:
+```text
+CHURNGUARD_SIGNUP_CODE="private-invite-code"
+```
+
+For open local signup, set:
 
 ```bash
-export CHURNGUARD_USERNAME="admin"
+export CHURNGUARD_ENABLE_SIGNUP=true
 export CHURNGUARD_PASSWORD="choose-a-local-password"
 uvicorn src.api.main:app --reload --port 8000
 ```
 
+New local accounts are saved in `data/app_users.json` with bcrypt password hashes.
+That file is ignored by Git.
+
+The old local demo fallback (`admin` / `admin123`) is disabled unless
+`CHURNGUARD_ENABLE_DEFAULT_ADMIN=true` is explicitly set.
+
 For deployments, prefer `CHURNGUARD_PASSWORD_HASH` with a bcrypt hash instead of a plain-text password.
+Set `CHURNGUARD_SESSION_SECRET` in production so browser sessions are signed with
+a deployment-specific secret.
+
+After sign-in, the app sends a bearer token to protected API endpoints. Prediction,
+batch scoring, and learning queue routes require that signed session token.
 
 ## 🧠 Learning From Company CSVs
 
@@ -187,7 +222,19 @@ Unlabeled company CSVs can be scored immediately through the Batch CSV analysis 
 To improve the model, upload labeled CSVs that include a known `Churn` column through
 the Learning Queue panel. Those rows are stored in `data/company_feedback.csv`, which is
 ignored by Git. The next run of `python scripts/train_and_save.py` automatically includes
-that labeled feedback in training.
+that labeled feedback in training. The API validates `Churn` labels before saving rows and
+exposes the current queue at:
+
+```text
+GET /learning/status
+```
+
+The admin dashboard also shows stored workspace totals: predictions, high-risk accounts,
+CSV upload batches, queued learning rows, current model type, and current training AUC.
+
+On Vercel, local SQLite and `/tmp` training CSV files are temporary function storage.
+For production learning, connect durable Postgres/Neon first, then add Vercel Blob for
+raw CSV archives or model artifacts when file retention becomes necessary.
 
 You can also add reviewed labeled datasets as CSV files in:
 
@@ -197,6 +244,76 @@ data/external/labeled_churn/
 
 Those files must use the same customer columns as the IBM Telco dataset plus `Churn`.
 They are included automatically the next time you run `python scripts/train_and_save.py`.
+
+## Portfolio Demo Flow
+
+1. Sign in to the private workspace.
+2. Use **Load demo file** in Batch CSV analysis to score sample customers instantly.
+3. Export high-risk accounts with **Export high-risk**.
+4. Upload labeled rows with a `Churn` column to the Learning Queue.
+5. Show the admin summary metrics as proof that the app stores operational history.
+
+## Privacy and Security Notes
+
+- Do not upload real company PII until durable storage, access controls, and deletion flows are configured.
+- Keep `.env`, `data/app_users.json`, feedback CSVs, and local database files out of Git.
+- Use hashed passwords in production via `CHURNGUARD_PASSWORD_HASH`.
+- Early pilots should be manually onboarded; open self-serve signup and billing should wait until tenant isolation and audit logs are complete.
+
+## Business Case
+
+Retention teams can use ChurnGuard to turn raw customer exports into a prioritized save list. The dashboard explains why each customer is risky, supports CSV batch scoring, exports high-risk accounts for outreach, and queues known outcomes so the model can improve as company-specific data arrives.
+
+## Product Roadmap
+
+### Current Release: Private Pilot and Portfolio
+
+This release is designed to look and behave like a real internal company tool:
+
+- Private admin login with bearer-token protected APIs
+- Single-customer churn scoring with feature explanations
+- CSV batch scoring for customer exports
+- High-risk customer export for retention outreach
+- Learning queue for labeled company rows
+- Admin summary cards for prediction volume, high-risk accounts, uploads, queued learning rows, and model metrics
+- Local SQLite pilot store for product history
+- Corrected model documentation for the current RandomForestClassifier artifact
+
+### Next Step: SaaS Foundation
+
+The next engineering milestone is to replace the pilot-only local store with production SaaS data foundations:
+
+1. Add Neon Postgres and migrate the current SQLite-shaped tables.
+2. Add first-class companies/workspaces instead of the current default pilot workspace.
+3. Move users into Postgres with roles: owner, analyst, and viewer.
+4. Enforce tenant isolation on every prediction, upload, learning row, and admin metric.
+5. Add upload validation reports so company CSV errors are clear before scoring.
+6. Add deployment smoke tests for protected APIs, database connection, and dashboard loading.
+
+### ML Upgrade Track
+
+The model should improve through disciplined evaluation before spending on heavy AI infrastructure:
+
+1. Compare Random Forest, Logistic Regression, XGBoost, and LightGBM on the same split.
+2. Track ROC-AUC, PR-AUC, F1, precision, recall, and calibration.
+3. Tune decision thresholds for business goals, especially recall-heavy retention workflows.
+4. Add a model registry with production and candidate model states.
+5. Require reviewed learning rows before retraining.
+6. Monitor prediction distribution drift, feature drift, label balance, and post-outcome performance.
+
+### Later SaaS and Enterprise Work
+
+- Stripe billing by prediction volume, upload size, and workspace tier
+- Password reset and optional OAuth through Clerk/Auth0
+- Audit logs and rate limiting
+- Company data deletion and retention controls
+- Vercel Blob for raw CSV archives and model artifacts
+- Monitoring for API errors, latency, and uptime
+- Onboarding checklist, downloadable CSV template, saved customer segments, and cohort insights
+
+### Spending Guidance
+
+Spend first on Neon/Postgres when storing real company uploads and prediction history in production. Buy a domain once the product name is final. Add Vercel Blob only when raw CSV/model artifact retention matters. Do not pay for heavy AI compute yet; the biggest near-term gains come from better evaluation, threshold tuning, cleaner company feedback, and a retraining approval workflow.
 
 ---
 

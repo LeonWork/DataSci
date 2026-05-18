@@ -79,6 +79,20 @@ class ModelInfoResponse(BaseModel):
     version: str
 
 
+class AdminSummaryResponse(BaseModel):
+    storage_backend: str
+    company_name: str
+    total_predictions: int
+    high_risk_predictions: int
+    csv_upload_batches: int
+    learning_rows_queued: int
+    latest_upload_at: str | None = None
+    model_type: str
+    model_version: str
+    model_auc: float | None = None
+    retrain_recommended: bool
+
+
 class LoginRequest(BaseModel):
     username: str
     password: str
@@ -89,11 +103,19 @@ class SignupRequest(BaseModel):
     email: str
     password: str
     confirm_password: str
+    invite_code: str | None = None
 
 
 class AuthResponse(BaseModel):
     ok: bool
     username: str
+    message: str
+    access_token: str | None = None
+
+
+class AuthConfigResponse(BaseModel):
+    signup_enabled: bool
+    signup_requires_invite: bool
     message: str
 
 
@@ -118,3 +140,15 @@ class LearningUploadResponse(BaseModel):
     accepted_rows: int
     stored_rows: int
     message: str
+
+
+class LearningStatusResponse(BaseModel):
+    ok: bool
+    storage_backend: str
+    storage_path: str
+    stored_rows: int
+    churn_yes_count: int
+    churn_no_count: int
+    latest_uploaded_at: str | None = None
+    retraining_command: str
+    warning: str | None = None

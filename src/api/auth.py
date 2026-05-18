@@ -6,19 +6,23 @@ Small local authentication helpers for the custom web app.
 
 from __future__ import annotations
 
+import base64
 import json
 import hmac
 import os
 import re
+import time
 from pathlib import Path
 
 import bcrypt
+from dotenv import load_dotenv
 
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
 ROOT = Path(__file__).resolve().parents[2]
+load_dotenv(ROOT / ".env")
 USER_STORE_PATH = (
     Path("/tmp") / "churnguard_app_users.json"
     if os.getenv("VERCEL")
@@ -27,6 +31,7 @@ USER_STORE_PATH = (
 USERNAME_PATTERN = re.compile(r"^[a-zA-Z0-9_.-]{3,32}$")
 DEFAULT_AUTH_USERNAME = "admin"
 DEFAULT_AUTH_PASSWORD_HASH = b"$2b$12$amCWoXmqjip9GRVhRnmNJ.DBvO1ayDKDMK7aOceeiXAXP4kWdmS4m"
+SESSION_TTL_SECONDS = 60 * 60 * 12
 
 
 def normalize_username(username: str) -> str:
@@ -61,7 +66,79 @@ def auth_setting(name: str, default: str | None = None) -> str | None:
     return os.getenv(name) or default
 
 
-def create_user(username: str, email: str, password: str, confirm_password: str) -> tuple[bool, str, dict | None]:
+def truthy_setting(name: str, default: str = "") -> bool:
+    return auth_setting(name, default).lower() in {"1", "true", "yes", "on"}
+
+
+def signup_requires_invite() -> bool:
+    return bool(auth_setting("CHURNGUARD_SIGNUP_CODE"))
+
+
+def signup_enabled() -> bool:
+    return truthy_setting("CHURNGUARD_ENABLE_SIGNUP") or signup_requires_invite()
+
+
+def _session_secret() -> bytes:
+    secret = (
+        auth_setting("CHURNGUARD_SESSION_SECRET")
+        or auth_setting("CHURNGUARD_PASSWORD_HASH")
+        or auth_setting("CHURNGUARD_PASSWORD")
+        or DEFAULT_AUTH_PASSWORD_HASH.decode()
+    )
+    return secret.encode()
+
+
+def _b64encode(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
+
+
+def _b64decode(data: str) -> bytes:
+    padding = "=" * (-len(data) % 4)
+    return base64.urlsafe_b64decode(data + padding)
+
+
+def create_session_token(username: str) -> str:
+    payload = {
+        "sub": normalize_username(username),
+        "exp": int(time.time()) + SESSION_TTL_SECONDS,
+    }
+    payload_part = _b64encode(json.dumps(payload, separators=(",", ":")).encode())
+    signature = hmac.new(_session_secret(), payload_part.encode(), "sha256").digest()
+    return f"{payload_part}.{_b64encode(signature)}"
+
+
+def verify_session_token(token: str) -> str | None:
+    try:
+        payload_part, signature_part = token.split(".", 1)
+        expected = hmac.new(_session_secret(), payload_part.encode(), "sha256").digest()
+        supplied = _b64decode(signature_part)
+        if not hmac.compare_digest(expected, supplied):
+            return None
+        payload = json.loads(_b64decode(payload_part))
+    except Exception:
+        return None
+
+    if int(payload.get("exp", 0)) < int(time.time()):
+        return None
+    username = payload.get("sub")
+    if not isinstance(username, str) or not USERNAME_PATTERN.match(username):
+        return None
+    return username
+
+
+def create_user(
+    username: str,
+    email: str,
+    password: str,
+    confirm_password: str,
+    invite_code: str | None = None,
+) -> tuple[bool, str, dict | None]:
+    expected_invite = auth_setting("CHURNGUARD_SIGNUP_CODE")
+    if not signup_enabled():
+        return False, "Account creation is disabled for this workspace.", None
+    if expected_invite and not hmac.compare_digest((invite_code or "").strip(), expected_invite):
+        return False, "Enter the workspace invite code.", None
+
     username_key = normalize_username(username)
     email = email.strip().lower()
 
@@ -96,9 +173,13 @@ def authenticate_user(username: str, password: str) -> dict | None:
     if user and verify_password(password, user["password_hash"]):
         return user
 
+    default_admin_enabled = truthy_setting("CHURNGUARD_ENABLE_DEFAULT_ADMIN")
     expected_username = normalize_username(auth_setting("CHURNGUARD_USERNAME", DEFAULT_AUTH_USERNAME))
     password_hash = auth_setting("CHURNGUARD_PASSWORD_HASH")
     plain_password = auth_setting("CHURNGUARD_PASSWORD")
+
+    if not (password_hash or plain_password or default_admin_enabled):
+        return None
 
     username_ok = hmac.compare_digest(username_key, expected_username)
     if password_hash:

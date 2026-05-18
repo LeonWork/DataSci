@@ -24,13 +24,22 @@ import os
 from pathlib import Path
 
 import pandas as pd
-from fastapi import FastAPI, File, HTTPException, UploadFile, status
+from fastapi import Depends, FastAPI, File, Header, HTTPException, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from src.api.auth import authenticate_user, create_user
+from src.api.auth import (
+    authenticate_user,
+    create_session_token,
+    create_user,
+    signup_enabled,
+    signup_requires_invite,
+    verify_session_token,
+)
 from src.api.model_loader import predictor
 from src.api.schemas import (
+    AdminSummaryResponse,
+    AuthConfigResponse,
     AuthResponse,
     BatchPredictionRequest,
     BatchPredictionResponse,
@@ -38,11 +47,20 @@ from src.api.schemas import (
     CustomerFeatures,
     FactorImpact,
     HealthResponse,
+    LearningStatusResponse,
     LearningUploadResponse,
     LoginRequest,
     ModelInfoResponse,
     PredictionResponse,
     SignupRequest,
+)
+from src.api.storage import (
+    admin_summary as build_admin_summary,
+    init_storage,
+    record_learning_rows,
+    record_prediction_event,
+    record_upload_batch,
+    storage_backend as product_storage_backend,
 )
 from src.utils.logger import get_logger
 
@@ -61,6 +79,17 @@ BATCH_REQUIRED_COLS = [
     "StreamingMovies", "Contract", "PaperlessBilling", "PaymentMethod",
     "MonthlyCharges", "TotalCharges",
 ]
+LEARNING_MAX_ROWS = 5000
+CHURN_VALUE_MAP = {
+    "yes": "Yes",
+    "y": "Yes",
+    "true": "Yes",
+    "1": "Yes",
+    "no": "No",
+    "n": "No",
+    "false": "No",
+    "0": "No",
+}
 
 
 # ── Lifespan ──────────────────────────────────────────────────────────────────
@@ -70,6 +99,7 @@ async def lifespan(app: FastAPI):
     """Load the model on startup; nothing to clean up on shutdown."""
     try:
         predictor.load()
+        init_storage()
         logger.info("API ready — model loaded successfully")
     except FileNotFoundError as exc:
         logger.error("Model artefacts missing: %s", exc)
@@ -83,7 +113,7 @@ app = FastAPI(
     title="Customer Churn Prediction API",
     description=(
         "Predicts the probability of a telecom customer churning "
-        "using a tuned XGBoost model trained on the IBM Telco dataset. "
+        "using a Random Forest model trained on the IBM Telco dataset. "
         "Every prediction includes SHAP-based feature explanations."
     ),
     version="1.0.0",
@@ -125,6 +155,22 @@ def _require_model() -> None:
         )
 
 
+def _require_session(authorization: str | None = Header(default=None)) -> str:
+    scheme, _, token = (authorization or "").partition(" ")
+    if scheme.lower() != "bearer" or not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Sign in to use this workspace.",
+        )
+    username = verify_session_token(token)
+    if username is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Session expired. Sign in again.",
+        )
+    return username
+
+
 async def _read_csv_upload(file: UploadFile) -> pd.DataFrame:
     if not file.filename.lower().endswith(".csv"):
         raise HTTPException(status_code=400, detail="Upload a CSV file.")
@@ -143,6 +189,46 @@ def _validate_customer_columns(df: pd.DataFrame) -> None:
         raise HTTPException(status_code=400, detail=f"CSV is missing required columns: {missing}")
 
 
+def _normalize_churn_values(values: pd.Series) -> pd.Series:
+    normalized = values.map(lambda value: CHURN_VALUE_MAP.get(str(value).strip().lower()))
+    invalid = sorted({
+        str(value)
+        for value, mapped in zip(values, normalized)
+        if pd.isna(mapped)
+    })
+    if invalid:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Churn must contain known Yes/No outcomes. "
+                f"Invalid values: {invalid}"
+            ),
+        )
+    return normalized
+
+
+def _read_feedback_store() -> pd.DataFrame:
+    if not FEEDBACK_PATH.exists():
+        return pd.DataFrame()
+    try:
+        return pd.read_csv(FEEDBACK_PATH)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Could not read learning queue: {exc}",
+        ) from exc
+
+
+def _learning_storage_backend() -> str:
+    csv_backend = "ephemeral /tmp training csv" if os.getenv("VERCEL") else "local training csv"
+    return f"{product_storage_backend()} + {csv_backend}"
+
+
+def _model_auc() -> float | None:
+    value = predictor.training_metrics.get("roc_auc") if predictor.training_metrics else None
+    return float(value) if value is not None else None
+
+
 # ── Routes ────────────────────────────────────────────────────────────────────
 
 @app.get("/health", response_model=HealthResponse, tags=["System"])
@@ -155,8 +241,25 @@ def health() -> HealthResponse:
     )
 
 
+@app.get("/auth/config", response_model=AuthConfigResponse, tags=["Authentication"])
+def auth_config() -> AuthConfigResponse:
+    enabled = signup_enabled()
+    invite = signup_requires_invite()
+    if not enabled:
+        message = "Private workspace. Sign in with your admin credentials."
+    elif invite:
+        message = "Invite-only workspace. Enter the invite code to create an account."
+    else:
+        message = "Account creation is open for this workspace."
+    return AuthConfigResponse(
+        signup_enabled=enabled,
+        signup_requires_invite=invite,
+        message=message,
+    )
+
+
 @app.get("/model-info", response_model=ModelInfoResponse, tags=["System"])
-def model_info() -> ModelInfoResponse:
+def model_info(_: str = Depends(_require_session)) -> ModelInfoResponse:
     """Return model metadata, feature count, and training metrics."""
     _require_model()
     return ModelInfoResponse(
@@ -168,6 +271,20 @@ def model_info() -> ModelInfoResponse:
     )
 
 
+@app.get("/admin/summary", response_model=AdminSummaryResponse, tags=["Admin"])
+def admin_summary(username: str = Depends(_require_session)) -> AdminSummaryResponse:
+    """Return workspace-level product metrics for the admin dashboard."""
+    _require_model()
+    del username
+    return AdminSummaryResponse(
+        **build_admin_summary(
+            model_type=type(predictor.model).__name__,
+            model_version="1.0.0",
+            model_auc=_model_auc(),
+        )
+    )
+
+
 @app.post("/auth/signup", response_model=AuthResponse, tags=["Authentication"])
 def signup(request: SignupRequest) -> AuthResponse:
     ok, message, user = create_user(
@@ -175,10 +292,16 @@ def signup(request: SignupRequest) -> AuthResponse:
         request.email,
         request.password,
         request.confirm_password,
+        request.invite_code,
     )
     if not ok or user is None:
         raise HTTPException(status_code=400, detail=message)
-    return AuthResponse(ok=True, username=user["username"], message=message)
+    return AuthResponse(
+        ok=True,
+        username=user["username"],
+        message=message,
+        access_token=create_session_token(user["username"]),
+    )
 
 
 @app.post("/auth/login", response_model=AuthResponse, tags=["Authentication"])
@@ -186,11 +309,16 @@ def login(request: LoginRequest) -> AuthResponse:
     user = authenticate_user(request.username, request.password)
     if user is None:
         raise HTTPException(status_code=401, detail="Invalid username or password.")
-    return AuthResponse(ok=True, username=user["username"], message="Signed in.")
+    return AuthResponse(
+        ok=True,
+        username=user["username"],
+        message="Signed in.",
+        access_token=create_session_token(user["username"]),
+    )
 
 
 @app.post("/predict", response_model=PredictionResponse, tags=["Prediction"])
-def predict(customer: CustomerFeatures) -> PredictionResponse:
+def predict(customer: CustomerFeatures, username: str = Depends(_require_session)) -> PredictionResponse:
     """
     Predict churn probability for a single customer.
 
@@ -199,7 +327,15 @@ def predict(customer: CustomerFeatures) -> PredictionResponse:
     _require_model()
     try:
         result = predictor.predict(customer.model_dump())
-        return _build_response(result)
+        response = _build_response(result)
+        record_prediction_event(
+            username=username,
+            customer_id=response.customer_id,
+            churn_probability=response.churn_probability,
+            risk_level=response.risk_level,
+            model_version=response.model_version,
+        )
+        return response
     except Exception as exc:
         logger.exception("Prediction error")
         raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -210,7 +346,10 @@ def predict(customer: CustomerFeatures) -> PredictionResponse:
     response_model=BatchPredictionResponse,
     tags=["Prediction"],
 )
-def predict_batch(request: BatchPredictionRequest) -> BatchPredictionResponse:
+def predict_batch(
+    request: BatchPredictionRequest,
+    username: str = Depends(_require_session),
+) -> BatchPredictionResponse:
     """
     Predict churn for a batch of up to 100 customers.
     """
@@ -229,6 +368,14 @@ def predict_batch(request: BatchPredictionRequest) -> BatchPredictionResponse:
             logger.error("Error on customer %s: %s", customer.customerID, exc)
 
     high_risk = sum(1 for p in predictions if p.risk_level == "High")
+    for prediction in predictions:
+        record_prediction_event(
+            username=username,
+            customer_id=prediction.customer_id,
+            churn_probability=prediction.churn_probability,
+            risk_level=prediction.risk_level,
+            model_version=prediction.model_version,
+        )
 
     return BatchPredictionResponse(
         predictions=predictions,
@@ -238,7 +385,10 @@ def predict_batch(request: BatchPredictionRequest) -> BatchPredictionResponse:
 
 
 @app.post("/predict-csv", response_model=CsvPredictionResponse, tags=["Prediction"])
-async def predict_csv(file: UploadFile = File(...)) -> CsvPredictionResponse:
+async def predict_csv(
+    file: UploadFile = File(...),
+    username: str = Depends(_require_session),
+) -> CsvPredictionResponse:
     """Score a customer CSV using the current model."""
     _require_model()
     raw = await _read_csv_upload(file)
@@ -263,11 +413,29 @@ async def predict_csv(file: UploadFile = File(...)) -> CsvPredictionResponse:
         })
 
     high_risk = sum(1 for row in rows if row["risk_level"] == "High")
+    record_upload_batch(
+        username=username,
+        source_file=file.filename,
+        upload_type="score",
+        row_count=len(rows),
+        high_risk_count=high_risk,
+    )
+    for row in rows:
+        record_prediction_event(
+            username=username,
+            customer_id=row["customerID"],
+            churn_probability=row["churn_probability"],
+            risk_level=row["risk_level"],
+            model_version="1.0.0",
+        )
     return CsvPredictionResponse(total=len(rows), high_risk_count=high_risk, rows=rows)
 
 
 @app.post("/learning/upload", response_model=LearningUploadResponse, tags=["Learning"])
-async def upload_learning_csv(file: UploadFile = File(...)) -> LearningUploadResponse:
+async def upload_learning_csv(
+    file: UploadFile = File(...),
+    username: str = Depends(_require_session),
+) -> LearningUploadResponse:
     """
     Store labeled company CSV rows for future retraining.
 
@@ -280,17 +448,30 @@ async def upload_learning_csv(file: UploadFile = File(...)) -> LearningUploadRes
             status_code=400,
             detail="Learning uploads need a Churn column with known Yes/No outcomes.",
         )
-    accepted = raw[BATCH_REQUIRED_COLS + ["Churn"]].copy()
+    if len(raw) > LEARNING_MAX_ROWS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Learning uploads are limited to {LEARNING_MAX_ROWS} rows per file.",
+        )
+
+    stored_columns = (["customerID"] if "customerID" in raw.columns else []) + BATCH_REQUIRED_COLS + ["Churn"]
+    accepted = raw[stored_columns].copy()
+    accepted["Churn"] = _normalize_churn_values(accepted["Churn"])
     accepted["source_file"] = file.filename
     accepted["uploaded_at"] = pd.Timestamp.utcnow().isoformat()
 
     FEEDBACK_PATH.parent.mkdir(parents=True, exist_ok=True)
-    if FEEDBACK_PATH.exists():
-        existing = pd.read_csv(FEEDBACK_PATH)
-        stored = pd.concat([existing, accepted], ignore_index=True)
-    else:
-        stored = accepted
+    existing = _read_feedback_store()
+    stored = pd.concat([existing, accepted], ignore_index=True) if not existing.empty else accepted
     stored.to_csv(FEEDBACK_PATH, index=False)
+    batch_id = record_upload_batch(
+        username=username,
+        source_file=file.filename,
+        upload_type="learning",
+        row_count=len(raw),
+        accepted_rows=len(accepted),
+    )
+    record_learning_rows(batch_id=batch_id, rows=accepted.to_dict(orient="records"))
 
     return LearningUploadResponse(
         ok=True,
@@ -299,6 +480,49 @@ async def upload_learning_csv(file: UploadFile = File(...)) -> LearningUploadRes
         message=(
             "Labeled rows saved for retraining. Run the retraining workflow after "
             "reviewing data quality and drift."
+        ),
+    )
+
+
+@app.get("/learning/status", response_model=LearningStatusResponse, tags=["Learning"])
+def learning_status(_: str = Depends(_require_session)) -> LearningStatusResponse:
+    """Summarize labeled rows waiting for the next offline retraining run."""
+    feedback = _read_feedback_store()
+    if feedback.empty:
+        return LearningStatusResponse(
+            ok=True,
+            storage_backend=_learning_storage_backend(),
+            storage_path=str(FEEDBACK_PATH),
+            stored_rows=0,
+            churn_yes_count=0,
+            churn_no_count=0,
+            latest_uploaded_at=None,
+            retraining_command="python scripts/train_and_save.py",
+            warning=(
+                "Uploads are temporary on Vercel until you connect Blob/Postgres."
+                if os.getenv("VERCEL")
+                else None
+            ),
+        )
+
+    churn_counts = feedback.get("Churn", pd.Series(dtype=str)).value_counts()
+    latest_uploaded_at = None
+    if "uploaded_at" in feedback.columns and not feedback["uploaded_at"].empty:
+        latest_uploaded_at = str(feedback["uploaded_at"].max())
+
+    return LearningStatusResponse(
+        ok=True,
+        storage_backend=_learning_storage_backend(),
+        storage_path=str(FEEDBACK_PATH),
+        stored_rows=len(feedback),
+        churn_yes_count=int(churn_counts.get("Yes", 0)),
+        churn_no_count=int(churn_counts.get("No", 0)),
+        latest_uploaded_at=latest_uploaded_at,
+        retraining_command="python scripts/train_and_save.py",
+        warning=(
+            "Uploads are temporary on Vercel until you connect Blob/Postgres."
+            if os.getenv("VERCEL")
+            else None
         ),
     )
 

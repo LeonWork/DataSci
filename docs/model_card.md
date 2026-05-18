@@ -1,130 +1,78 @@
-# Customer Churn Prediction — Model Card
+# Customer Churn Prediction Model Card
 
 ## Model Overview
 
 | Field | Value |
 |-------|-------|
-| **Model type** | XGBoost Classifier (gradient boosted trees) |
-| **Task** | Binary classification — churn (1) vs. no-churn (0) |
-| **Dataset** | IBM Telco Customer Churn (7,043 rows, 21 features) |
-| **Target** | `Churn` — whether a customer cancelled service within the billing period |
-| **Version** | 1.0.0 |
-| **Last trained** | Week 3–4 (see MLflow `churn-baseline` experiment) |
-
----
+| Model type | RandomForestClassifier |
+| Task | Binary classification: churn vs. no churn |
+| Dataset | IBM Telco Customer Churn |
+| Target | `Churn` |
+| Version | 1.0.0 |
+| Current status | Pilot model, not yet company-calibrated |
 
 ## Intended Use
 
-**Primary use case:** Identify telecom customers at high risk of churning so retention teams can intervene proactively.
+ChurnGuard scores telecom-style customer accounts so retention teams can prioritize outreach, inspect the strongest churn drivers, and export a focused list of high-risk customers.
 
-**Intended users:** Customer success teams, data analysts, product managers.
-
-**Out-of-scope uses:** Credit scoring, employment decisions, or any high-stakes decisions where model errors carry significant harm.
-
----
+This model is appropriate for retention triage and portfolio demonstrations. It is not appropriate for credit, employment, insurance, healthcare, or other high-stakes eligibility decisions.
 
 ## Training Data
 
 | Property | Value |
 |----------|-------|
-| Source | [Kaggle: blastchar/telco-customer-churn](https://www.kaggle.com/datasets/blastchar/telco-customer-churn) |
+| Source | IBM Telco Customer Churn sample dataset |
 | Size | 7,043 customers |
-| Churn rate | ~26.5% (imbalanced) |
-| Train / test split | 80% / 20% (stratified) |
-| Missing values | 11 rows with blank `TotalCharges` → imputed as 0 |
-
----
+| Positive class | `Churn = Yes` |
+| Churn rate | About 26.5% |
+| Feedback rows | Optional reviewed company rows from `data/company_feedback.csv` and `data/external/labeled_churn/` |
 
 ## Features
 
-### Engineered Features (Week 2)
+The model uses original customer attributes plus engineered account signals:
 
 | Feature | Description |
 |---------|-------------|
-| `clv` | Customer Lifetime Value = tenure × MonthlyCharges |
-| `avg_monthly_charge` | TotalCharges / max(tenure, 1) |
-| `charge_increase` | MonthlyCharges − avg_monthly_charge |
+| `clv` | `tenure * MonthlyCharges` |
+| `avg_monthly_charge` | `TotalCharges / max(tenure, 1)` |
+| `charge_increase` | `MonthlyCharges - avg_monthly_charge` |
 | `contract_stability` | Month-to-month=0, One year=1, Two year=2 |
-| `service_bundle_score` | Count of add-on services subscribed |
-| `has_internet` | 1 if any internet service, else 0 |
-| `tenure_band` | new / mid / loyal / champion lifecycle bucket |
-| `is_high_value` | 1 if CLV ≥ 75th percentile |
+| `service_bundle_score` | Count of subscribed add-on services |
+| `has_internet` | Whether the customer has internet service |
+| `tenure_band` | Lifecycle bucket for tenure |
+| `is_high_value` | Whether CLV is in a high-value range |
 
-### Preprocessing
-- Numerical: median imputation → StandardScaler
-- Categorical: mode imputation → OneHotEncoder (drop_first=True)
+## Current Performance
 
----
+The deployed artifact in `models/model_meta.json` reports:
 
-## Model Performance
+| Metric | Score |
+|--------|-------|
+| ROC-AUC | 0.7897 |
+| F1 | 0.5428 |
+| Accuracy | 0.7381 |
+| Precision | 0.4611 |
+| Recall | 0.6596 |
 
-| Metric | Score (test set) |
-|--------|-----------------|
-| ROC-AUC | ~0.84–0.86 |
-| F1 Score | ~0.60–0.65 |
-| Accuracy | ~0.80–0.82 |
-| Precision | ~0.66–0.72 |
-| Recall | ~0.55–0.60 |
-
-> **Note:** Due to class imbalance (~27% churn), AUC and F1 are the primary metrics. Accuracy alone is misleading.
-
----
-
-## Limitations & Risks
-
-- **Static snapshot:** The model was trained on historical data. Customer behaviour and pricing plans change over time — retrain quarterly.
-- **Class imbalance:** Churn is the minority class (~27%). The model may underestimate churn in extreme cases.
-- **Feature drift:** If the product catalogue changes (new service types, new contract structures), features like `service_bundle_score` may drift.
-- **Proxy discrimination:** `SeniorCitizen`, `gender`, and `Partner` are included as features. Monitor for disparate impact across demographic groups.
-
----
+The next ML upgrade should compare Random Forest, Logistic Regression, XGBoost, and LightGBM under the same reproducible split, then choose a threshold based on the business goal. A retention team may prefer higher recall even if precision falls, because missing true churners can be more expensive than contacting extra customers.
 
 ## Explainability
 
-Every prediction is accompanied by SHAP values computed via `shap.TreeExplainer`. The top contributing factors are returned in the API response and displayed in the Streamlit dashboard.
+Every prediction includes the top feature impacts used by the dashboard. The current implementation uses model explanation values to show whether each factor increases or reduces the churn score for that customer.
 
-**Key drivers identified in the training data (typical ranking):**
-1. `tenure` — shorter tenure → higher churn risk
-2. `Contract` — Month-to-month significantly higher risk than Two year
-3. `InternetService_Fiber optic` — higher cost, higher churn rate
-4. `TotalCharges` / `clv` — lower total spend → newer, riskier customers
-5. `TechSupport` / `OnlineSecurity` — lack of protective services → higher risk
+Typical risk drivers in this dataset include short tenure, month-to-month contracts, fiber optic service, high monthly charges, and missing support/security add-ons.
 
----
+## Limitations
 
-## API
+- The model is trained on a public telecom dataset and is not yet calibrated to a specific company.
+- Prediction quality may drift if pricing, products, contracts, or customer behavior change.
+- Demographic fields such as gender and senior-citizen status require fairness review before production use.
+- Uploaded company feedback is queued for retraining, but the current app still needs review, approval, registry, and promotion controls before automated production retraining.
 
-```
-POST /predict
-Content-Type: application/json
+## Roadmap
 
-{
-  "customerID": "C-123",
-  "tenure": 2,
-  "Contract": "Month-to-month",
-  "MonthlyCharges": 85.5,
-  ...
-}
-```
-
-Response includes: `churn_probability`, `risk_level`, `top_factors` (SHAP).
-
----
-
-## Reproducibility
-
-```bash
-# 1. Download dataset
-kaggle datasets download -d blastchar/telco-customer-churn -p data/raw --unzip
-
-# 2. Train and save model
-python scripts/train_and_save.py
-
-# 3. Run API
-uvicorn src.api.main:app --reload --port 8000
-
-# 4. Run dashboard
-streamlit run dashboard/app.py
-```
-
-All experiment runs are tracked in MLflow (`mlruns/` directory).
+1. Add a model comparison report with ROC-AUC, PR-AUC, F1, precision, recall, and calibration.
+2. Add a model registry that separates production and candidate models.
+3. Add reviewed learning-row states: `queued`, `approved_for_training`, and `used_in_model`.
+4. Add drift monitoring and a `retrain_recommended` signal.
+5. Add company-level calibration after enough labeled outcomes are collected.
