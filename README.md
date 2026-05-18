@@ -292,17 +292,39 @@ This release is designed to look and behave like a real internal company tool:
 - Workspace member tracking for owner/analyst/viewer readiness
 - Corrected model documentation for the current RandomForestClassifier artifact
 
-### Next Step: Production Data Foundation
+### Immediate Next Steps
 
-The next engineering milestone is to move the workspace-aware pilot foundation onto production-grade data services:
+The app is already Postgres-ready, but the best next coding step before creating
+the Neon account is upload validation and error reporting. That gives companies
+a much better first experience when they upload messy CSV exports.
 
-1. Provision Neon Postgres and set `DATABASE_URL` locally and in Vercel.
-2. Run the app once so SQLAlchemy creates the production tables.
-3. Seed your owner account into Postgres using the existing admin environment credentials.
-4. Add admin-created company onboarding instead of environment-variable workspace setup.
-5. Add upload validation reports so company CSV errors are clear before scoring.
-6. Add deployment smoke tests for protected APIs, database connection, and dashboard loading.
-7. Add basic audit logs for login, upload, prediction, export, and learning-row review events.
+Recommended order:
+
+1. Build CSV validation/error reports for scoring and learning uploads.
+2. Create a Neon Postgres project.
+3. Set `DATABASE_URL` locally and in Vercel.
+4. Run the app once so SQLAlchemy creates the production tables.
+5. Seed your owner account into Postgres using the existing admin environment credentials.
+6. Add admin-created company onboarding instead of environment-variable workspace setup.
+7. Add deployment smoke tests for protected APIs, database connection, and dashboard loading.
+8. Add basic audit logs for login, upload, prediction, export, and learning-row review events.
+
+### Neon Setup Checklist
+
+You do not need the Neon CLI. When ready:
+
+1. Create a Neon account and project in the browser.
+2. Copy the pooled Postgres connection string.
+3. Add it to local `.env`:
+
+```text
+DATABASE_URL="postgresql://USER:PASSWORD@HOST/dbname?sslmode=require"
+```
+
+4. Add the same `DATABASE_URL` in Vercel environment variables.
+5. Run a local smoke test, then a Vercel production smoke test.
+
+The app can keep using local SQLite until this checklist is done.
 
 ### ML Upgrade Track
 
