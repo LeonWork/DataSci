@@ -644,7 +644,7 @@ async function loadTenants() {
     // Build table
     let html = `<table><thead><tr>
       <th>Company</th><th>Users</th><th>Schema</th><th>Model</th>
-      <th>Learning Rows</th><th>Predictions</th><th>Created</th>
+      <th>Learning Rows</th><th>Predictions</th><th>Created</th><th>Actions</th>
     </tr></thead><tbody>`;
     for (const t of tenants) {
       const schemaStatus = t.has_schema ? '✅' : '⚠️ None';
@@ -658,10 +658,52 @@ async function loadTenants() {
         <td>${t.learning_rows.toLocaleString()}</td>
         <td>${t.predictions.toLocaleString()}</td>
         <td>${created}</td>
+        <td>
+          <button class="impersonate-btn" data-id="${t.company_id}" style="padding:0.35rem 0.65rem;font-size:0.75rem;background:linear-gradient(135deg, var(--cyan) 0%, #0891b2 100%);border:none;color:#111827;border-radius:6px;cursor:pointer;font-weight:700;box-shadow:0 2px 6px rgba(8,145,178,0.15);">🔬 View in Lab</button>
+          ${t.company_id !== 'default' ? `<button class="delete-tenant-btn" data-id="${t.company_id}" style="padding:0.35rem 0.65rem;font-size:0.75rem;background:#fee2e2;border:1px solid #fca5a5;color:#dc2626;border-radius:6px;margin-left:0.35rem;cursor:pointer;font-weight:700;">🗑️ Delete</button>` : ''}
+        </td>
       </tr>`;
     }
     html += '</tbody></table>';
     table.innerHTML = html;
+
+    // Remove existing event listener if any (by replacing table with clone, or just adding once)
+    if (!table.dataset.delegated) {
+      table.dataset.delegated = "true";
+      table.addEventListener("click", async (e) => {
+        const impBtn = e.target.closest(".impersonate-btn");
+        const delBtn = e.target.closest(".delete-tenant-btn");
+        
+        if (impBtn) {
+          const companyId = impBtn.dataset.id;
+          try {
+            const data = await postJson("/admin/impersonate", { company_id: companyId });
+            localStorage.setItem("churnguard_token", data.access_token);
+            localStorage.setItem("churnguard_company_id", data.company_id);
+            
+            // Reload all context!
+            await loadWorkspace();
+            await loadSchema();
+            showPage("lab");
+            await loadLabData();
+          } catch (err) {
+            alert("Failed to switch context: " + err.message);
+          }
+        }
+        
+        if (delBtn) {
+          const companyId = delBtn.dataset.id;
+          if (!confirm(`Are you absolutely sure you want to delete tenant '${companyId}'? All predictions and model artifacts will be destroyed.`)) return;
+          try {
+            const data = await postJson("/admin/delete-tenant", { company_id: companyId });
+            alert(data.message);
+            loadTenants();
+          } catch (err) {
+            alert("Failed to delete tenant: " + err.message);
+          }
+        }
+      });
+    }
   } catch (error) {
     table.innerHTML = '<p style="color:var(--red)">Failed to load tenants.</p>';
   }
@@ -965,6 +1007,31 @@ document.getElementById("adminRetrainAll")?.addEventListener("click", async () =
       msg.style.color = "var(--red)";
     }
   }
+});
+
+document.body.addEventListener("click", (e) => {
+  const btn = e.target.closest("#loadTestTrialBtn");
+  if (!btn) return;
+  const container = document.getElementById("dynamicFormFields");
+  if (!container) return;
+  const inputs = container.querySelectorAll("input, select");
+  inputs.forEach(input => {
+    if (input.tagName.toLowerCase() === "select") {
+      if (input.options.length > 0) {
+        input.selectedIndex = 0;
+      }
+    } else if (input.type === "number") {
+      const name = input.name.toLowerCase();
+      if (name.includes("tenure")) input.value = 12;
+      else if (name.includes("charge")) input.value = 65;
+      else if (name.includes("total")) input.value = 780;
+      else input.value = 15;
+    } else {
+      input.value = "1";
+    }
+  });
+  // Auto-submit the profileForm
+  document.getElementById("profileForm")?.dispatchEvent(new Event("submit", { cancelable: true }));
 });
 
 const existingUser = localStorage.getItem("churnguard_user");

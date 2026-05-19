@@ -59,6 +59,7 @@ from src.api.schemas import (
     WorkspaceResponse,
     CompanyOnboardRequest,
     CompanyOnboardResponse,
+    ImpersonateRequest,
 )
 from src.api.storage import (
     admin_summary as build_admin_summary,
@@ -545,6 +546,67 @@ def onboard_company(
         company_id=request.company_id,
         message=f"Company '{request.company_name}' and owner '{request.owner_username}' created successfully.",
     )
+
+
+@app.post("/admin/impersonate", tags=["Admin"])
+def impersonate_company(
+    request: ImpersonateRequest,
+    session: AuthenticatedUser = Depends(_require_session)
+) -> dict:
+    """Allow platform owners to switch their session token to another tenant company context."""
+    if session.role != "owner":
+        raise HTTPException(status_code=403, detail="Platform owners only.")
+        
+    from src.api.auth import create_session_token_for_user
+    impersonated_user = {
+        "username": session.username,
+        "email": session.email,
+        "company_id": request.company_id,
+        "role": session.role,  # Keep owner privileges
+    }
+    new_token = create_session_token_for_user(impersonated_user)
+    return {
+        "status": "success",
+        "access_token": new_token,
+        "company_id": request.company_id,
+        "role": session.role
+    }
+
+
+@app.post("/admin/delete-tenant", tags=["Admin"])
+def delete_tenant(
+    request: ImpersonateRequest,
+    session: AuthenticatedUser = Depends(_require_session)
+) -> dict:
+    """Delete a company and all associated schemas, users, predictions, and learning rows."""
+    if session.role != "owner":
+        raise HTTPException(status_code=403, detail="Platform owners only.")
+    if request.company_id == "default":
+        raise HTTPException(status_code=400, detail="Cannot delete default system tenant.")
+        
+    from src.api.storage import (
+        engine as get_engine, companies, app_users, prediction_events,
+        learning_rows as lr_table, company_schemas
+    )
+    eng = get_engine()
+    with eng.begin() as conn:
+        conn.execute(prediction_events.delete().where(prediction_events.c.company_id == request.company_id))
+        conn.execute(lr_table.delete().where(lr_table.c.company_id == request.company_id))
+        conn.execute(company_schemas.delete().where(company_schemas.c.company_id == request.company_id))
+        conn.execute(app_users.delete().where(app_users.c.company_id == request.company_id))
+        conn.execute(companies.delete().where(companies.c.id == request.company_id))
+        
+    import os
+    model_dir = Path(__file__).resolve().parents[2] / "models"
+    for suffix in ["_model.joblib", "_pipeline.joblib", "_model_meta.json"]:
+        p = model_dir / f"{request.company_id}{suffix}"
+        if p.exists():
+            try:
+                os.remove(p)
+            except Exception:
+                pass
+                
+    return {"status": "success", "message": f"Tenant {request.company_id} deleted successfully."}
 
 
 @app.post("/auth/signup", response_model=AuthResponse, tags=["Authentication"])

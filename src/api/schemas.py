@@ -185,3 +185,7 @@ class CompanyOnboardResponse(BaseModel):
     company_id: str
     message: str
 
+
+class ImpersonateRequest(BaseModel):
+    company_id: str
+
