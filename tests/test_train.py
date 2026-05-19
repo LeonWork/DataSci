@@ -130,7 +130,7 @@ class TestTrainAllBaselines:
         results = train_all_baselines(
             X_tr, y_tr, X_te, y_te, log_to_mlflow=False
         )
-        assert set(results.keys()) == {"LogisticRegression", "RandomForest", "XGBoost"}
+        assert set(results.keys()) == {"LogisticRegression", "RandomForest", "XGBoost", "LightGBM"}
 
     def test_all_have_metrics(self, synthetic_data):
         X_tr, X_te, y_tr, y_te = synthetic_data

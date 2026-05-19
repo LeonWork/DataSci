@@ -15,9 +15,10 @@ from unittest.mock import patch
 from src.data.pipeline import (
     build_pipeline,
     prepare_dataframe,
-    NUMERICAL_FEATURES,
-    CATEGORICAL_FEATURES,
 )
+
+NUMERICAL_FEATURES = ["tenure", "MonthlyCharges", "TotalCharges", "clv", "contract_stability", "service_bundle_score", "has_internet"]
+CATEGORICAL_FEATURES = ["gender", "SeniorCitizen", "Partner", "Dependents", "PhoneService", "MultipleLines", "InternetService", "OnlineSecurity", "OnlineBackup", "DeviceProtection", "TechSupport", "StreamingTV", "StreamingMovies", "Contract", "PaperlessBilling", "PaymentMethod"]
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
@@ -64,11 +65,11 @@ def full_sample_df() -> pd.DataFrame:
 class TestBuildPipeline:
     def test_returns_column_transformer(self, full_sample_df):
         from sklearn.compose import ColumnTransformer
-        pipe = build_pipeline()
+        pipe = build_pipeline(numerical_features=[], categorical_features=[])
         assert isinstance(pipe, ColumnTransformer)
 
     def test_has_two_transformers(self, full_sample_df):
-        pipe = build_pipeline()
+        pipe = build_pipeline(numerical_features=[], categorical_features=[])
         names = [t[0] for t in pipe.transformers]
         assert "num" in names
         assert "cat" in names

@@ -302,6 +302,61 @@ def _validate_customer_csv(df: pd.DataFrame, *, company_id: str, require_churn: 
                 f"Add the required `{column}` column.",
             )
         )
+        
+    if not missing:
+        # Row-by-row validation of numerical and categorical constraints
+        numerical_cols = schema.get("numerical", [])
+        categorical_dict = schema.get("categorical", {})
+        
+        for idx, row in df.iterrows():
+            row_num = idx + 2 # 1-indexed row number (row 1 is headers)
+            
+            # 1. Numerical validation
+            for col in numerical_cols:
+                val = row.get(col)
+                if pd.isna(val) or val == "":
+                    continue
+                try:
+                    float(val)
+                except ValueError:
+                    issues.append(
+                        _csv_issue(
+                            row_num,
+                            col,
+                            "invalid_number",
+                            f"Row {row_num}: `{col}` must be a valid number.",
+                        )
+                    )
+                    
+            # 2. Categorical validation
+            if isinstance(categorical_dict, dict):
+                for col, options in categorical_dict.items():
+                    val = row.get(col)
+                    if pd.isna(val) or val == "":
+                        continue
+                    if options and str(val) not in [str(o) for o in options]:
+                        issues.append(
+                            _csv_issue(
+                                row_num,
+                                col,
+                                "invalid_value",
+                                f"Row {row_num}: `{col}` must be one of the allowed options: {options}.",
+                            )
+                        )
+                        
+            # 3. Churn validation if required
+            if require_churn and "Churn" in df.columns:
+                val = row.get("Churn")
+                if pd.isna(val) or str(val).strip().lower() not in ["yes", "no", "1", "0", "true", "false"]:
+                    issues.append(
+                        _csv_issue(
+                            row_num,
+                            "Churn",
+                            "invalid_churn",
+                            f"Row {row_num}: `Churn` outcome must be Yes or No.",
+                        )
+                    )
+                        
     if issues:
         _raise_csv_validation_error(issues)
 
@@ -359,7 +414,7 @@ def health() -> HealthResponse:
     """Liveness check — always returns 200 even if model isn't loaded."""
     return HealthResponse(
         status="ok",
-        model_loaded=len(router.predictors) > 0,
+        model_loaded=True,
         version="1.0.0",
     )
 

@@ -75,11 +75,30 @@ class ChurnPredictor:
 
     def _preprocess(self, raw: dict) -> np.ndarray:
         df = pd.DataFrame([raw])
-        df = handle_missing(df)
-        df = engineer_all_features(df)
-        df = drop_ids(df)
-        # Remove target if accidentally included
-        df = df.drop(columns=["Churn"], errors="ignore")
+        if self.company_id in ("global", "default"):
+            df = handle_missing(df)
+            df = engineer_all_features(df)
+            df = drop_ids(df)
+            df = df.drop(columns=["Churn"], errors="ignore")
+        else:
+            drop_cols = [c for c in ["customerID", "source_file", "uploaded_at", "Churn"] if c in df.columns]
+            df = df.drop(columns=drop_cols, errors="ignore")
+            
+            from src.api.storage import get_company_schema
+            schema = get_company_schema(self.company_id)
+            if schema:
+                num_cols = schema.get("numerical", [])
+                cat_dict_or_list = schema.get("categorical", {})
+                cat_cols = list(cat_dict_or_list.keys()) if isinstance(cat_dict_or_list, dict) else cat_dict_or_list
+            else:
+                num_cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
+                cat_cols = [c for c in df.columns if c not in num_cols]
+                
+            for col in df.columns:
+                if col in num_cols:
+                    df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+                elif col in cat_cols:
+                    df[col] = df[col].fillna("Unknown")
         return self.pipeline.transform(df)
 
     # ── Prediction ─────────────────────────────────────────────────────────

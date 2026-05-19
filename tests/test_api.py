@@ -8,6 +8,11 @@ Uses TestClient with a mocked predictor so no real model file is needed.
 
 from __future__ import annotations
 
+import os
+import tempfile
+# Force isolated test database before any other imports trigger engine initialization
+os.environ["CHURNGUARD_DB_PATH"] = os.path.join(tempfile.gettempdir(), "churnguard-test-isolated.sqlite3")
+
 from io import BytesIO
 import json
 from datetime import datetime, timezone
@@ -69,15 +74,32 @@ MOCK_PREDICTION = {
 def client(tmp_path, monkeypatch):
     """TestClient with predictor mocked as loaded and working."""
     monkeypatch.setenv("CHURNGUARD_DB_PATH", str(tmp_path / "churnguard-test.sqlite3"))
-    with patch("src.api.main.predictor") as mock_pred:
-        mock_pred.is_loaded = True
-        mock_pred.model.__class__.__name__ = "RandomForestClassifier"
-        mock_pred.feature_names = ["tenure", "MonthlyCharges"]
-        mock_pred.training_metrics = {"roc_auc": 0.7897}
-        mock_pred.predict.return_value = MOCK_PREDICTION
-        test_client = TestClient(app)
-        test_client.headers.update({"Authorization": f"Bearer {create_session_token('admin')}"})
-        yield test_client
+    
+    # Reset engine and clean up DB tables for test isolation
+    from src.api.storage import engine, prediction_events, learning_rows, upload_batches, app_users, workspace_members
+    eng = engine()
+    try:
+        with eng.begin() as conn:
+            conn.execute(prediction_events.delete())
+            conn.execute(learning_rows.delete())
+            conn.execute(upload_batches.delete())
+            conn.execute(app_users.delete())
+            conn.execute(workspace_members.delete())
+    except Exception:
+        pass
+        
+    mock_pred = MagicMock()
+    mock_pred.is_loaded = True
+    mock_pred.model.__class__.__name__ = "RandomForestClassifier"
+    mock_pred.feature_names = ["tenure", "MonthlyCharges"]
+    mock_pred.training_metrics = {"roc_auc": 0.7897}
+    mock_pred.predict.return_value = MOCK_PREDICTION
+    
+    with patch("src.api.model_loader.router.get_predictor", return_value=mock_pred):
+        with patch("src.api.main._require_model"):
+            test_client = TestClient(app)
+            test_client.headers.update({"Authorization": f"Bearer {create_session_token('admin')}"})
+            yield test_client
 
 
 # ── /health ───────────────────────────────────────────────────────────────────
@@ -208,8 +230,8 @@ class TestPredictBatch:
 
 class TestUnloadedModel:
     def test_predict_503_when_model_not_loaded(self):
-        with patch("src.api.main.predictor") as mock_pred:
-            mock_pred.is_loaded = False
+        from fastapi import HTTPException
+        with patch("src.api.main._require_model", side_effect=HTTPException(status_code=503, detail="Unloaded")):
             c = TestClient(app)
             c.headers.update({"Authorization": f"Bearer {create_session_token('admin')}"})
             resp = c.post("/predict", json=SAMPLE_CUSTOMER)
