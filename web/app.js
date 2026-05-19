@@ -950,8 +950,20 @@ document.getElementById("adminRefreshTenants")?.addEventListener("click", () => 
 document.getElementById("adminRetrainAll")?.addEventListener("click", async () => {
   const msg = document.getElementById("adminActionMessage");
   if (msg) {
-    msg.textContent = "Retraining triggered. Run `python scripts/train_and_save.py all` in the server terminal to complete.";
+    msg.textContent = "⏳ Triggering background model retraining...";
     msg.style.color = "var(--amber)";
+  }
+  try {
+    const data = await postJson("/admin/retrain", {});
+    if (msg) {
+      msg.textContent = "✅ " + data.message;
+      msg.style.color = "var(--green)";
+    }
+  } catch (error) {
+    if (msg) {
+      msg.textContent = "❌ " + error.message;
+      msg.style.color = "var(--red)";
+    }
   }
 });
 

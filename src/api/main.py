@@ -480,6 +480,32 @@ def list_tenants(session: AuthenticatedUser = Depends(_require_session)) -> list
     return tenants
 
 
+@app.post("/admin/retrain", tags=["Admin"])
+def retrain_all_models(session: AuthenticatedUser = Depends(_require_session)) -> dict:
+    """Trigger the retraining script for all models in a background thread."""
+    if session.role != "owner":
+        raise HTTPException(status_code=403, detail="Platform owners only.")
+    
+    import subprocess
+    import threading
+    import sys
+    
+    def run_training():
+        python_bin = sys.executable
+        script_path = Path(__file__).resolve().parents[2] / "scripts" / "train_and_save.py"
+        try:
+            result = subprocess.run([python_bin, str(script_path), "all"], capture_output=True, text=True)
+            print("Retraining completed asynchronously:", result.stdout)
+            if result.stderr:
+                print("Retraining stderr:", result.stderr)
+        except Exception as e:
+            print("Failed to run retraining:", e)
+            
+    thread = threading.Thread(target=run_training)
+    thread.start()
+    return {"status": "success", "message": "Retraining triggered successfully in the background."}
+
+
 @app.post("/admin/onboard", response_model=CompanyOnboardResponse, tags=["Admin"])
 def onboard_company(
     request: CompanyOnboardRequest,
