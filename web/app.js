@@ -49,6 +49,9 @@ const highRiskPredictions = document.querySelector("#highRiskPredictions");
 const queuedLearningRows = document.querySelector("#queuedLearningRows");
 const loadDemoCsv = document.querySelector("#loadDemoCsv");
 const exportHighRisk = document.querySelector("#exportHighRisk");
+const adminSection = document.querySelector("#adminSection");
+const onboardForm = document.querySelector("#onboardForm");
+const onboardMessage = document.querySelector("#onboardMessage");
 let lastCustomer = null;
 let lastPrediction = null;
 let lastBatchRows = [];
@@ -111,10 +114,12 @@ function setSession(username) {
   signedInUser.textContent = `Signed in as ${username}`;
   authView.classList.add("hidden");
   dashboardView.classList.remove("hidden");
+  loadSchema();
   loadModelInfo();
   loadLearningStatus();
   loadAdminSummary();
   loadWorkspace();
+  loadTenants();
 }
 
 function setAuthenticatedSession(username, token, companyId, role) {
@@ -125,10 +130,12 @@ function setAuthenticatedSession(username, token, companyId, role) {
   signedInUser.textContent = `Signed in as ${username}`;
   authView.classList.add("hidden");
   dashboardView.classList.remove("hidden");
+  loadSchema();
   loadModelInfo();
   loadLearningStatus();
   loadAdminSummary();
   loadWorkspace();
+  loadTenants();
 }
 
 function clearSession() {
@@ -271,6 +278,10 @@ async function loadWorkspace() {
     const companyId = localStorage.getItem("churnguard_company_id");
     const role = localStorage.getItem("churnguard_role");
     workspaceBadge.textContent = companyId && role ? `${companyId} · ${role}` : "";
+  }
+  const role = localStorage.getItem("churnguard_role");
+  if (adminSection) {
+    adminSection.classList.toggle("hidden", role !== "owner");
   }
 }
 
@@ -550,6 +561,112 @@ function exportHighRiskCsv() {
   URL.revokeObjectURL(url);
 }
 
+async function loadSchema() {
+  const container = document.getElementById("dynamicFormFields");
+  if (!container) return;
+  const role = localStorage.getItem("churnguard_role");
+  if (role === "platform_admin") {
+    container.innerHTML = '<p style="color:var(--gray-400); font-size:14px;">Platform Admins manage workspaces and do not have an active prediction schema.</p>';
+    const btn = document.querySelector("#profileForm .primary");
+    if (btn) btn.disabled = true;
+    return;
+  }
+
+  try {
+    const data = await fetch("/admin/schema", { headers: authHeaders() }).then(r => {
+      if (!r.ok) throw new Error("Failed to load schema");
+      return r.json();
+    });
+    
+    let html = "";
+    const numCols = data.numerical || [];
+    const catCols = data.categorical || {};
+    
+    if (numCols.length === 0 && Object.keys(catCols).length === 0) {
+      container.innerHTML = '<p style="color:var(--gray-400); font-size:14px;">Upload a Seed CSV in the Improvement Lab to initialize your dynamic schema and generate your form.</p>';
+      return;
+    }
+
+    if (numCols.length > 0) {
+      html += '<fieldset><legend>Numerical Attributes</legend>';
+      numCols.forEach(col => {
+        html += `<label>${col}<input name="${col}" type="number" step="0.1" value="0" /></label>`;
+      });
+      html += '</fieldset>';
+    }
+
+    if (Object.keys(catCols).length > 0) {
+      html += '<fieldset><legend>Categorical Attributes</legend>';
+      for (const [col, values] of Object.entries(catCols)) {
+        if (Array.isArray(values) && values.length > 0 && values.length < 15) {
+          html += `<label>${col}<select name="${col}">`;
+          values.forEach(v => {
+            html += `<option value="${v}">${v}</option>`;
+          });
+          html += `</select></label>`;
+        } else {
+          html += `<label>${col}<input name="${col}" type="text" placeholder="Value" /></label>`;
+        }
+      }
+      html += '</fieldset>';
+    }
+    
+    container.innerHTML = html;
+  } catch (error) {
+    container.innerHTML = '<p style="color:var(--red); font-size:14px;">Failed to load dynamic schema.</p>';
+  }
+}
+
+async function loadTenants() {
+  const table = document.getElementById("tenantTable");
+  const role = localStorage.getItem("churnguard_role");
+  if (!table || role !== "owner") return;
+  try {
+    const response = await fetch("/admin/tenants", { headers: authHeaders() });
+    if (!response.ok) return;
+    const tenants = await response.json();
+
+    if (tenants.length === 0) {
+      table.innerHTML = '<p style="color:var(--gray-400)">No tenants onboarded yet.</p>';
+      return;
+    }
+
+    // Update KPI cards
+    const totalTenants = document.getElementById("adminTotalTenants");
+    const totalModels = document.getElementById("adminTotalModels");
+    const totalUsers = document.getElementById("adminTotalUsers");
+    const totalPredictions = document.getElementById("adminTotalPredictions");
+    if (totalTenants) totalTenants.textContent = tenants.length;
+    if (totalModels) totalModels.textContent = tenants.filter(t => t.has_model).length;
+    if (totalUsers) totalUsers.textContent = tenants.reduce((s, t) => s + t.user_count, 0);
+    if (totalPredictions) totalPredictions.textContent = tenants.reduce((s, t) => s + t.predictions, 0).toLocaleString();
+
+    // Build table
+    let html = `<table><thead><tr>
+      <th>Company</th><th>Users</th><th>Schema</th><th>Model</th>
+      <th>Learning Rows</th><th>Predictions</th><th>Created</th>
+    </tr></thead><tbody>`;
+    for (const t of tenants) {
+      const schemaStatus = t.has_schema ? '✅' : '⚠️ None';
+      const modelStatus = t.has_model ? '✅ Trained' : '❌ Not trained';
+      const created = t.created_at ? new Date(t.created_at).toLocaleDateString() : '—';
+      html += `<tr>
+        <td><strong>${t.company_name || t.company_id}</strong><br><small style="color:var(--gray-400)">${t.company_id}</small></td>
+        <td>${t.user_count}</td>
+        <td>${schemaStatus}</td>
+        <td>${modelStatus}</td>
+        <td>${t.learning_rows.toLocaleString()}</td>
+        <td>${t.predictions.toLocaleString()}</td>
+        <td>${created}</td>
+      </tr>`;
+    }
+    html += '</tbody></table>';
+    table.innerHTML = html;
+  } catch (error) {
+    table.innerHTML = '<p style="color:var(--red)">Failed to load tenants.</p>';
+  }
+}
+
 async function loadModelInfo() {
   try {
     const response = await fetch("/model-info", { headers: authHeaders() });
@@ -601,10 +718,156 @@ logoutButton.addEventListener("click", clearSession);
 toggleSidebar.addEventListener("click", () => {
   setSidebarHidden(!document.body.classList.contains("sidebar-hidden"));
 });
-openLab.addEventListener("click", () => showPage("lab"));
+openLab.addEventListener("click", () => { showPage("lab"); loadLabData(); });
 backToDashboard.addEventListener("click", () => showPage("dashboard"));
-document.querySelector("#highPreset").addEventListener("click", () => applyPreset(highRiskPreset));
-document.querySelector("#lowPreset").addEventListener("click", () => applyPreset(lowRiskPreset));
+
+// ── Lab Tab Switching ──────────────────────────────────────────────
+document.querySelector(".lab-tabs")?.addEventListener("click", (e) => {
+  const tab = e.target.closest(".lab-tab");
+  if (!tab) return;
+  document.querySelectorAll(".lab-tab").forEach(t => t.classList.remove("active"));
+  document.querySelectorAll(".lab-panel").forEach(p => p.classList.add("hidden"));
+  tab.classList.add("active");
+  const panel = document.getElementById(tab.dataset.tab);
+  if (panel) panel.classList.remove("hidden");
+});
+
+async function loadLabData() {
+  loadLabSchema();
+  loadLabMetrics();
+}
+
+async function loadLabSchema() {
+  const view = document.getElementById("labSchemaView");
+  if (!view) return;
+  try {
+    const data = await fetch("/admin/schema", { headers: authHeaders() }).then(r => r.json());
+    const numCols = data.numerical || [];
+    const catCols = data.categorical || {};
+    const catKeys = typeof catCols === "object" && !Array.isArray(catCols) ? Object.keys(catCols) : (Array.isArray(catCols) ? catCols : []);
+
+    if (numCols.length === 0 && catKeys.length === 0) {
+      view.innerHTML = '<p style="color:var(--muted);font-size:14px;">No schema detected yet. Upload a seed CSV in the Train & Learn tab.</p>';
+      return;
+    }
+
+    let html = '<div class="schema-chips">';
+    numCols.forEach(c => { html += `<span class="schema-chip schema-chip--num">🔢 ${c}</span>`; });
+    catKeys.forEach(c => { html += `<span class="schema-chip schema-chip--cat">🏷️ ${c}</span>`; });
+    html += '</div>';
+    html += `<p style="margin-top:.6rem;font-size:.82rem;color:var(--muted)">${numCols.length} numerical · ${catKeys.length} categorical</p>`;
+    view.innerHTML = html;
+  } catch {
+    view.innerHTML = '<p style="color:var(--red)">Failed to load schema.</p>';
+  }
+}
+
+async function loadLabMetrics() {
+  const metricsDiv = document.getElementById("labModelMetrics");
+  const heroAuc = document.getElementById("labModelAuc");
+  const heroQueued = document.getElementById("labQueuedRows");
+  const heroPreds = document.getElementById("labTotalPreds");
+  try {
+    const info = await fetch("/model-info", { headers: authHeaders() }).then(r => r.ok ? r.json() : null);
+    if (info) {
+      const m = info.training_metrics || {};
+      if (heroAuc) heroAuc.textContent = m.roc_auc ? Number(m.roc_auc).toFixed(3) : "--";
+      if (metricsDiv) {
+        let html = "";
+        const metrics = [
+          ["AUC", m.roc_auc], ["F1", m.f1], ["Accuracy", m.accuracy],
+          ["Precision", m.precision], ["Recall", m.recall], ["Features", info.n_features]
+        ];
+        metrics.forEach(([label, val]) => {
+          const display = typeof val === "number" ? (val < 1 ? (val * 100).toFixed(1) + "%" : val) : (val || "--");
+          html += `<div class="lab-metric"><span class="lab-metric__value">${display}</span><span class="lab-metric__label">${label}</span></div>`;
+        });
+        metricsDiv.innerHTML = html;
+      }
+    }
+  } catch {}
+  try {
+    const summary = await fetch("/admin/summary", { headers: authHeaders() }).then(r => r.ok ? r.json() : null);
+    if (summary) {
+      if (heroQueued) heroQueued.textContent = summary.learning_rows_queued?.toLocaleString() || "0";
+      if (heroPreds) heroPreds.textContent = summary.total_predictions?.toLocaleString() || "0";
+    }
+  } catch {}
+}
+
+// ── Lab Learning CSV Upload ────────────────────────────────────────
+document.getElementById("labLearningCsv")?.addEventListener("change", async (e) => {
+  const file = e.target.files?.[0];
+  if (!file) return;
+  const status = document.getElementById("labLearningStatus");
+  if (status) status.textContent = "Uploading labeled rows...";
+  try {
+    const data = await postFile("/learning/upload", file);
+    if (status) status.textContent = `✅ ${data.accepted_rows} rows accepted. ${data.stored_rows} total queued.`;
+    loadLabMetrics();
+  } catch (error) {
+    if (status) status.textContent = `❌ ${error.message}`;
+  }
+});
+
+// ── Lab Seed CSV Upload ────────────────────────────────────────────
+document.getElementById("labSeedCsv")?.addEventListener("change", async (e) => {
+  const file = e.target.files?.[0];
+  if (!file) return;
+  const status = document.getElementById("labSeedStatus");
+  if (status) status.textContent = "Uploading seed CSV...";
+  try {
+    const data = await postFile("/learning/upload", file);
+    if (status) {
+      status.textContent = `✅ Schema inferred! ${data.accepted_rows} rows queued.`;
+      status.style.color = "var(--green)";
+    }
+    loadSchema();
+    loadLabSchema();
+  } catch (error) {
+    if (status) status.textContent = `❌ ${error.message}`;
+  }
+});
+
+// ── Lab Export Buttons ─────────────────────────────────────────────
+document.getElementById("labExportSchema")?.addEventListener("click", async () => {
+  const msg = document.getElementById("labExportMessage");
+  try {
+    const data = await fetch("/admin/schema", { headers: authHeaders() }).then(r => r.json());
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a"); a.href = url; a.download = "churnguard_schema.json";
+    document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+    if (msg) { msg.textContent = "✅ Schema exported."; msg.style.color = "var(--green)"; }
+  } catch {
+    if (msg) { msg.textContent = "❌ Failed to export schema."; msg.style.color = "var(--red)"; }
+  }
+});
+
+document.getElementById("labExportHighRisk")?.addEventListener("click", () => {
+  exportHighRiskCsv();
+  const msg = document.getElementById("labExportMessage");
+  if (msg) { msg.textContent = lastBatchRows.length ? "✅ High-risk CSV downloaded." : "⚠️ Run a batch prediction first."; msg.style.color = lastBatchRows.length ? "var(--green)" : "var(--amber)"; }
+});
+
+document.getElementById("labExportTemplate")?.addEventListener("click", async () => {
+  const msg = document.getElementById("labExportMessage");
+  try {
+    const data = await fetch("/admin/schema", { headers: authHeaders() }).then(r => r.json());
+    const numCols = data.numerical || [];
+    const catCols = data.categorical || {};
+    const catKeys = typeof catCols === "object" && !Array.isArray(catCols) ? Object.keys(catCols) : (Array.isArray(catCols) ? catCols : []);
+    const headers = [...numCols, ...catKeys, "Churn"];
+    const csv = headers.join(",") + "\n";
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a"); a.href = url; a.download = "churnguard_template.csv";
+    document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+    if (msg) { msg.textContent = "✅ Template CSV downloaded."; msg.style.color = "var(--green)"; }
+  } catch {
+    if (msg) { msg.textContent = "❌ No schema available yet."; msg.style.color = "var(--red)"; }
+  }
+});
 closeDetail.addEventListener("click", () => featureDetail.classList.add("hidden"));
 factorList.addEventListener("click", (event) => {
   const row = event.target.closest(".factor-row");
@@ -663,6 +926,34 @@ loadDemoCsv.addEventListener("click", async () => {
 });
 
 exportHighRisk.addEventListener("click", exportHighRiskCsv);
+
+onboardForm?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  onboardMessage.textContent = "Provisioning workspace...";
+  onboardMessage.style.color = "inherit";
+  try {
+    const data = await postJson("/admin/onboard", formToObject(onboardForm));
+    onboardMessage.textContent = data.message;
+    onboardMessage.style.color = "var(--green)";
+    onboardForm.reset();
+    loadTenants();
+  } catch (error) {
+    onboardMessage.textContent = error.message;
+    onboardMessage.style.color = "var(--red)";
+  }
+});
+
+document.getElementById("adminRefreshTenants")?.addEventListener("click", () => {
+  loadTenants();
+});
+
+document.getElementById("adminRetrainAll")?.addEventListener("click", async () => {
+  const msg = document.getElementById("adminActionMessage");
+  if (msg) {
+    msg.textContent = "Retraining triggered. Run `python scripts/train_and_save.py all` in the server terminal to complete.";
+    msg.style.color = "var(--amber)";
+  }
+});
 
 const existingUser = localStorage.getItem("churnguard_user");
 const existingToken = localStorage.getItem("churnguard_token");

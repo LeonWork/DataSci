@@ -170,3 +170,18 @@ class WorkspaceResponse(BaseModel):
     plan: str
     status: str
     members: list[WorkspaceMemberResponse]
+
+
+class CompanyOnboardRequest(BaseModel):
+    company_id: str
+    company_name: str
+    owner_username: str
+    owner_email: str
+    owner_password: str
+
+
+class CompanyOnboardResponse(BaseModel):
+    ok: bool
+    company_id: str
+    message: str
+

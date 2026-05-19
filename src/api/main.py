@@ -37,8 +37,9 @@ from src.api.auth import (
     signup_enabled,
     signup_requires_invite,
     verify_session_token,
+    hash_password,
 )
-from src.api.model_loader import predictor
+from src.api.model_loader import router
 from src.api.schemas import (
     AdminSummaryResponse,
     AuthConfigResponse,
@@ -56,6 +57,8 @@ from src.api.schemas import (
     PredictionResponse,
     SignupRequest,
     WorkspaceResponse,
+    CompanyOnboardRequest,
+    CompanyOnboardResponse,
 )
 from src.api.storage import (
     admin_summary as build_admin_summary,
@@ -66,6 +69,11 @@ from src.api.storage import (
     storage_backend as product_storage_backend,
     upsert_workspace_member,
     workspace_overview,
+    create_db_user,
+    ensure_company,
+    record_audit_event,
+    get_company_schema,
+    save_company_schema,
 )
 from src.utils.logger import get_logger
 
@@ -130,14 +138,8 @@ CSV_NUMERIC_RANGES = {
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Load the model on startup; nothing to clean up on shutdown."""
-    try:
-        predictor.load()
-        init_storage()
-        logger.info("API ready — model loaded successfully")
-    except FileNotFoundError as exc:
-        logger.error("Model artefacts missing: %s", exc)
-        logger.error("Run: python scripts/train_and_save.py  to generate them.")
+    """Initialize storage on startup."""
+    init_storage()
     yield
 
 
@@ -178,12 +180,14 @@ def _build_response(result: dict) -> PredictionResponse:
     )
 
 
-def _require_model() -> None:
-    if not predictor.is_loaded:
+def _require_model(company_id: str) -> None:
+    try:
+        router.get_predictor(company_id)
+    except FileNotFoundError:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=(
-                "Model not loaded. "
+                "Model not loaded for this workspace. "
                 "Run 'python scripts/train_and_save.py' to generate model artefacts."
             ),
         )
@@ -252,8 +256,29 @@ def _raise_csv_validation_error(issues: list[dict]) -> None:
     )
 
 
-def _validate_customer_csv(df: pd.DataFrame, *, require_churn: bool, max_rows: int) -> pd.DataFrame:
+def _validate_customer_csv(df: pd.DataFrame, *, company_id: str, require_churn: bool, max_rows: int) -> tuple[pd.DataFrame, dict]:
+    schema = get_company_schema(company_id)
+    if not schema:
+        num_cols = []
+        cat_cols = {}
+        for col in df.columns:
+            if col in ["customerID", "Churn", "source_file", "uploaded_at"]:
+                continue
+            if pd.api.types.is_numeric_dtype(df[col]):
+                num_cols.append(col)
+            else:
+                # Capture unique values, limit to 20 just in case
+                unique_vals = df[col].dropna().unique().tolist()
+                cat_cols[col] = unique_vals[:20]
+        schema = {"numerical": num_cols, "categorical": cat_cols}
+        save_company_schema(company_id, schema)
+        logger.info("Inferred and saved new schema for %s", company_id)
+
+    # For validation, we need the keys of categorical
+    cat_keys = list(schema.get("categorical", {}).keys()) if isinstance(schema.get("categorical"), dict) else schema.get("categorical", [])
+    required_columns = schema.get("numerical", []) + cat_keys + (["Churn"] if require_churn else [])
     issues: list[dict] = []
+    
     if df.empty:
         issues.append(_csv_issue(None, "file", "empty_csv", "CSV has headers but no customer rows."))
     if len(df) > max_rows:
@@ -266,7 +291,6 @@ def _validate_customer_csv(df: pd.DataFrame, *, require_churn: bool, max_rows: i
             )
         )
 
-    required_columns = BATCH_REQUIRED_COLS + (["Churn"] if require_churn else [])
     missing = [column for column in required_columns if column not in df.columns]
     for column in missing:
         issues.append(
@@ -280,67 +304,7 @@ def _validate_customer_csv(df: pd.DataFrame, *, require_churn: bool, max_rows: i
     if issues:
         _raise_csv_validation_error(issues)
 
-    validated = df.copy()
-    for column, allowed in CSV_ALLOWED_VALUES.items():
-        values = validated[column]
-        blank_mask = values.isna() | values.astype(str).str.strip().eq("")
-        for index in values[blank_mask].index[:10]:
-            issues.append(
-                _csv_issue(
-                    int(index) + 2,
-                    column,
-                    "blank_value",
-                    f"`{column}` cannot be blank.",
-                )
-            )
-        invalid_mask = ~blank_mask & ~values.astype(str).isin(allowed)
-        invalid_values = values[invalid_mask]
-        for index, value in invalid_values.head(10).items():
-            issues.append(
-                _csv_issue(
-                    int(index) + 2,
-                    column,
-                    "invalid_value",
-                    f"`{value}` is not valid. Use one of: {', '.join(sorted(allowed))}.",
-                )
-            )
-
-    for column, (minimum, maximum) in CSV_NUMERIC_RANGES.items():
-        numeric = pd.to_numeric(validated[column], errors="coerce")
-        blank_mask = validated[column].isna() | validated[column].astype(str).str.strip().eq("")
-        invalid_mask = numeric.isna() | (numeric < minimum)
-        if maximum is not None:
-            invalid_mask = invalid_mask | (numeric > maximum)
-        invalid_mask = invalid_mask | blank_mask
-        range_label = f"{minimum} or greater" if maximum is None else f"{minimum} to {maximum}"
-        for index, value in validated.loc[invalid_mask, column].head(10).items():
-            issues.append(
-                _csv_issue(
-                    int(index) + 2,
-                    column,
-                    "invalid_number",
-                    f"`{value}` is not valid. Use a number from {range_label}.",
-                )
-            )
-        validated[column] = numeric
-
-    if require_churn:
-        normalized = validated["Churn"].map(lambda value: CHURN_VALUE_MAP.get(str(value).strip().lower()))
-        invalid_mask = normalized.isna()
-        for index, value in validated.loc[invalid_mask, "Churn"].head(10).items():
-            issues.append(
-                _csv_issue(
-                    int(index) + 2,
-                    "Churn",
-                    "invalid_churn",
-                    f"`{value}` is not valid. Use Yes or No.",
-                )
-            )
-        validated["Churn"] = normalized
-
-    if issues:
-        _raise_csv_validation_error(issues)
-    return validated
+    return df.copy(), schema
 
 
 def _normalize_churn_values(values: pd.Series) -> pd.Series:
@@ -378,9 +342,13 @@ def _learning_storage_backend() -> str:
     return f"{product_storage_backend()} + {csv_backend}"
 
 
-def _model_auc() -> float | None:
-    value = predictor.training_metrics.get("roc_auc") if predictor.training_metrics else None
-    return float(value) if value is not None else None
+def _model_auc(company_id: str) -> float | None:
+    try:
+        p = router.get_predictor(company_id)
+        value = p.training_metrics.get("roc_auc") if p.training_metrics else None
+        return float(value) if value is not None else None
+    except FileNotFoundError:
+        return None
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
@@ -390,7 +358,7 @@ def health() -> HealthResponse:
     """Liveness check — always returns 200 even if model isn't loaded."""
     return HealthResponse(
         status="ok",
-        model_loaded=predictor.is_loaded,
+        model_loaded=len(router.predictors) > 0,
         version="1.0.0",
     )
 
@@ -413,14 +381,15 @@ def auth_config() -> AuthConfigResponse:
 
 
 @app.get("/model-info", response_model=ModelInfoResponse, tags=["System"])
-def model_info(_: AuthenticatedUser = Depends(_require_session)) -> ModelInfoResponse:
+def model_info(session: AuthenticatedUser = Depends(_require_session)) -> ModelInfoResponse:
     """Return model metadata, feature count, and training metrics."""
-    _require_model()
+    _require_model(session.company_id)
+    p = router.get_predictor(session.company_id)
     return ModelInfoResponse(
-        model_type=type(predictor.model).__name__,
-        n_features=len(predictor.feature_names),
-        feature_names=predictor.feature_names,
-        training_metrics=predictor.training_metrics,
+        model_type=type(p.model).__name__,
+        n_features=len(p.feature_names),
+        feature_names=p.feature_names,
+        training_metrics=p.training_metrics,
         version="1.0.0",
     )
 
@@ -428,21 +397,128 @@ def model_info(_: AuthenticatedUser = Depends(_require_session)) -> ModelInfoRes
 @app.get("/admin/summary", response_model=AdminSummaryResponse, tags=["Admin"])
 def admin_summary(session: AuthenticatedUser = Depends(_require_session)) -> AdminSummaryResponse:
     """Return workspace-level product metrics for the admin dashboard."""
-    _require_model()
+    _require_model(session.company_id)
+    p = router.get_predictor(session.company_id)
     return AdminSummaryResponse(
         **build_admin_summary(
-            model_type=type(predictor.model).__name__,
+            model_type=type(p.model).__name__,
             model_version="1.0.0",
-            model_auc=_model_auc(),
+            model_auc=_model_auc(session.company_id),
             company_id=session.company_id,
         )
     )
+
+@app.get("/admin/schema", tags=["Admin"])
+def get_schema(session: AuthenticatedUser = Depends(_require_session)) -> dict:
+    """Return the dynamic schema for the company."""
+    schema = get_company_schema(session.company_id)
+    if not schema:
+        # Fallback to empty schema
+        return {"numerical": [], "categorical": []}
+    return schema
 
 
 @app.get("/admin/workspace", response_model=WorkspaceResponse, tags=["Admin"])
 def workspace(session: AuthenticatedUser = Depends(_require_session)) -> WorkspaceResponse:
     """Return the current workspace and its known members."""
     return WorkspaceResponse(**workspace_overview(session.company_id))
+
+
+@app.get("/admin/tenants", tags=["Admin"])
+def list_tenants(session: AuthenticatedUser = Depends(_require_session)) -> list[dict]:
+    """Return all onboarded tenants with stats (Platform Admins only)."""
+    if session.role != "owner":
+        raise HTTPException(status_code=403, detail="Platform owners only.")
+    from src.api.storage import (
+        engine as get_engine, companies, app_users, prediction_events,
+        learning_rows as lr_table, company_schemas, upload_batches
+    )
+    from sqlalchemy import select as sel, func
+    eng = get_engine()
+    with eng.connect() as conn:
+        rows = conn.execute(
+            sel(
+                companies.c.id,
+                companies.c.name,
+                companies.c.created_at,
+            )
+            .order_by(companies.c.created_at.desc())
+        ).fetchall()
+
+        schemas = {r[0] for r in conn.execute(sel(company_schemas.c.company_id)).fetchall()}
+
+        tenant_stats = {}
+        for r in rows:
+            cid = r[0]
+            user_count = conn.execute(
+                sel(func.count()).select_from(app_users).where(app_users.c.company_id == cid)
+            ).scalar() or 0
+            pred_count = conn.execute(
+                sel(func.count()).select_from(prediction_events).where(prediction_events.c.company_id == cid)
+            ).scalar() or 0
+            lr_count = conn.execute(
+                sel(func.count()).select_from(lr_table).where(lr_table.c.company_id == cid)
+            ).scalar() or 0
+            tenant_stats[cid] = {"users": user_count, "preds": pred_count, "lr": lr_count}
+
+    model_dir = Path(__file__).resolve().parents[2] / "models"
+    tenants = []
+    for r in rows:
+        cid, name, created = r[0], r[1], r[2]
+        has_model = (model_dir / f"{cid}_model.joblib").exists()
+        stats = tenant_stats.get(cid, {})
+        tenants.append({
+            "company_id": cid,
+            "company_name": name,
+            "created_at": created.isoformat() if created else None,
+            "user_count": stats.get("users", 0),
+            "predictions": stats.get("preds", 0),
+            "learning_rows": stats.get("lr", 0),
+            "has_schema": cid in schemas,
+            "has_model": has_model,
+        })
+    return tenants
+
+
+@app.post("/admin/onboard", response_model=CompanyOnboardResponse, tags=["Admin"])
+def onboard_company(
+    request: CompanyOnboardRequest,
+    session: AuthenticatedUser = Depends(_require_session),
+) -> CompanyOnboardResponse:
+    """Create a new company and its owner (Platform Admins only)."""
+    if session.role != "owner":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only platform owners can onboard new companies."
+        )
+
+    ensure_company(request.company_id, request.company_name)
+
+    user = {
+        "username": request.owner_username,
+        "email": request.owner_email,
+        "company_id": request.company_id,
+        "company_name": request.company_name,
+        "role": "owner",
+        "password_hash": hash_password(request.owner_password),
+    }
+
+    try:
+        create_db_user(user)
+        record_audit_event(
+            username=user["username"],
+            event_type="company_onboard",
+            details=f"Provisioned company {request.company_id}",
+            company_id=request.company_id
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    return CompanyOnboardResponse(
+        ok=True,
+        company_id=request.company_id,
+        message=f"Company '{request.company_name}' and owner '{request.owner_username}' created successfully.",
+    )
 
 
 @app.post("/auth/signup", response_model=AuthResponse, tags=["Authentication"])
@@ -456,7 +532,7 @@ def signup(request: SignupRequest) -> AuthResponse:
     )
     if not ok or user is None:
         raise HTTPException(status_code=400, detail=message)
-    return AuthResponse(
+    response = AuthResponse(
         ok=True,
         username=user["username"],
         message=message,
@@ -464,6 +540,13 @@ def signup(request: SignupRequest) -> AuthResponse:
         company_id=user["company_id"],
         role=user["role"],
     )
+    record_audit_event(
+        username=user["username"],
+        event_type="signup",
+        details="User account created via web signup",
+        company_id=user["company_id"]
+    )
+    return response
 
 
 @app.post("/auth/login", response_model=AuthResponse, tags=["Authentication"])
@@ -471,6 +554,14 @@ def login(request: LoginRequest) -> AuthResponse:
     user = authenticate_user(request.username, request.password)
     if user is None:
         raise HTTPException(status_code=401, detail="Invalid username or password.")
+    
+    record_audit_event(
+        username=user["username"],
+        event_type="login",
+        details="User signed in successfully",
+        company_id=user["company_id"]
+    )
+    
     return AuthResponse(
         ok=True,
         username=user["username"],
@@ -482,15 +573,19 @@ def login(request: LoginRequest) -> AuthResponse:
 
 
 @app.post("/predict", response_model=PredictionResponse, tags=["Prediction"])
-def predict(customer: CustomerFeatures, session: AuthenticatedUser = Depends(_require_session)) -> PredictionResponse:
+def predict(
+    customer: CustomerFeatures,
+    session: AuthenticatedUser = Depends(_require_session),
+) -> PredictionResponse:
     """
-    Predict churn probability for a single customer.
+    Predict churn for a single customer.
 
     Returns the probability, risk level, and top SHAP feature contributions.
     """
-    _require_model()
+    _require_model(session.company_id)
     try:
-        result = predictor.predict(customer.model_dump())
+        p = router.get_predictor(session.company_id)
+        result = p.predict(customer.model_dump())
         response = _build_response(result)
         record_prediction_event(
             username=session.username,
@@ -498,6 +593,12 @@ def predict(customer: CustomerFeatures, session: AuthenticatedUser = Depends(_re
             churn_probability=response.churn_probability,
             risk_level=response.risk_level,
             model_version=response.model_version,
+            company_id=session.company_id,
+        )
+        record_audit_event(
+            username=session.username,
+            event_type="prediction",
+            details=f"Single prediction for {response.customer_id} (Risk: {response.risk_level})",
             company_id=session.company_id,
         )
         return response
@@ -518,16 +619,17 @@ def predict_batch(
     """
     Predict churn for a batch of up to 100 customers.
     """
-    _require_model()
+    _require_model(session.company_id)
     if len(request.customers) > 100:
         raise HTTPException(
             status_code=400,
             detail="Batch size limited to 100 customers per request.",
         )
     predictions = []
+    p = router.get_predictor(session.company_id)
     for customer in request.customers:
         try:
-            result = predictor.predict(customer.model_dump())
+            result = p.predict(customer.model_dump())
             predictions.append(_build_response(result))
         except Exception as exc:
             logger.error("Error on customer %s: %s", customer.customerID, exc)
@@ -543,6 +645,13 @@ def predict_batch(
             company_id=session.company_id,
         )
 
+    record_audit_event(
+        username=session.username,
+        event_type="predict_batch",
+        details=f"Batch scored {len(predictions)} customers ({high_risk} high risk)",
+        company_id=session.company_id,
+    )
+
     return BatchPredictionResponse(
         predictions=predictions,
         total=len(predictions),
@@ -556,15 +665,16 @@ async def predict_csv(
     session: AuthenticatedUser = Depends(_require_session),
 ) -> CsvPredictionResponse:
     """Score a customer CSV using the current model."""
-    _require_model()
+    _require_model(session.company_id)
     raw = await _read_csv_upload(file)
-    raw = _validate_customer_csv(raw, require_churn=False, max_rows=SCORING_MAX_ROWS)
+    raw, schema = _validate_customer_csv(raw, company_id=session.company_id, require_churn=False, max_rows=SCORING_MAX_ROWS)
 
     rows = []
+    p = router.get_predictor(session.company_id)
     for index, record in raw.iterrows():
         customer = record.to_dict()
         customer.setdefault("customerID", f"ROW-{index + 1}")
-        result = predictor.predict(customer)
+        result = p.predict(customer)
         top_driver = result["top_factors"][0]["feature"] if result["top_factors"] else ""
         rows.append({
             "customerID": str(customer.get("customerID", f"ROW-{index + 1}")),
@@ -594,6 +704,13 @@ async def predict_csv(
             model_version="1.0.0",
             company_id=session.company_id,
         )
+        
+    record_audit_event(
+        username=session.username,
+        event_type="predict_csv",
+        details=f"CSV upload scored {len(rows)} customers",
+        company_id=session.company_id,
+    )
     return CsvPredictionResponse(total=len(rows), high_risk_count=high_risk, rows=rows)
 
 
@@ -608,9 +725,10 @@ async def upload_learning_csv(
     The file must include the normal customer columns plus a Churn column.
     """
     raw = await _read_csv_upload(file)
-    raw = _validate_customer_csv(raw, require_churn=True, max_rows=LEARNING_MAX_ROWS)
+    raw, schema = _validate_customer_csv(raw, company_id=session.company_id, require_churn=True, max_rows=LEARNING_MAX_ROWS)
 
-    stored_columns = (["customerID"] if "customerID" in raw.columns else []) + BATCH_REQUIRED_COLS + ["Churn"]
+    cat_keys = list(schema.get("categorical", {}).keys()) if isinstance(schema.get("categorical"), dict) else schema.get("categorical", [])
+    stored_columns = (["customerID"] if "customerID" in raw.columns else []) + schema.get("numerical", []) + cat_keys + ["Churn"]
     accepted = raw[stored_columns].copy()
     accepted["source_file"] = file.filename
     accepted["uploaded_at"] = pd.Timestamp.utcnow().isoformat()
@@ -630,6 +748,13 @@ async def upload_learning_csv(
     record_learning_rows(
         batch_id=batch_id,
         rows=accepted.to_dict(orient="records"),
+        company_id=session.company_id,
+    )
+
+    record_audit_event(
+        username=session.username,
+        event_type="learning_upload",
+        details=f"Queued {len(accepted)} labeled rows from {file.filename}",
         company_id=session.company_id,
     )
 

@@ -7,6 +7,7 @@ Models:
     - Logistic Regression  (interpretable baseline)
     - Random Forest        (ensemble tree baseline)
     - XGBoost              (gradient boosting baseline)
+    - LightGBM             (fast gradient boosting baseline)
 
 Each training run is logged to MLflow with:
     - Parameters (hyperparameters)
@@ -30,6 +31,7 @@ import numpy as np
 from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier
 from xgboost import XGBClassifier
+from lightgbm import LGBMClassifier
 
 from src.models.evaluate import compute_metrics, log_confusion_matrix
 from src.utils.logger import get_logger
@@ -71,6 +73,18 @@ DEFAULT_XGB_PARAMS: dict[str, Any] = {
     "eval_metric": "logloss",
     "random_state": 42,
     "n_jobs": -1,
+}
+
+DEFAULT_LGBM_PARAMS: dict[str, Any] = {
+    "n_estimators": 300,
+    "max_depth": 5,
+    "learning_rate": 0.05,
+    "subsample": 0.8,
+    "colsample_bytree": 0.8,
+    "class_weight": "balanced",
+    "random_state": 42,
+    "n_jobs": -1,
+    "verbose": -1,
 }
 
 
@@ -199,6 +213,21 @@ def train_xgboost(
                        "XGBoost", p, log_to_mlflow)
 
 
+def train_lightgbm(
+    X_train: np.ndarray,
+    y_train: np.ndarray,
+    X_test: np.ndarray,
+    y_test: np.ndarray,
+    params: dict[str, Any] | None = None,
+    log_to_mlflow: bool = True,
+) -> dict[str, Any]:
+    """Train and log a LightGBM model."""
+    p = {**DEFAULT_LGBM_PARAMS, **(params or {})}
+    model = LGBMClassifier(**p)
+    return train_model(model, X_train, y_train, X_test, y_test,
+                       "LightGBM", p, log_to_mlflow)
+
+
 def train_all_baselines(
     X_train: np.ndarray,
     y_train: np.ndarray,
@@ -227,6 +256,9 @@ def train_all_baselines(
     results["XGBoost"] = train_xgboost(
         X_train, y_train, X_test, y_test, log_to_mlflow=log_to_mlflow
     )
+    results["LightGBM"] = train_lightgbm(
+        X_train, y_train, X_test, y_test, log_to_mlflow=log_to_mlflow
+    )
 
     # Print comparison table
     logger.info("\n%s", _format_results_table(results))
@@ -234,13 +266,13 @@ def train_all_baselines(
 
 
 def _format_results_table(results: dict) -> str:
-    header = f"{'Model':<22} {'AUC':>7} {'F1':>7} {'Acc':>7} {'Prec':>7} {'Rec':>7}"
+    header = f"{'Model':<20} {'AUC':>7} {'PR-AUC':>7} {'Brier':>7} {'F1':>7} {'Acc':>7} {'Prec':>7} {'Rec':>7}"
     sep = "-" * len(header)
     rows = [header, sep]
     for name, r in results.items():
         m = r["metrics"]
         rows.append(
-            f"{name:<22} {m['roc_auc']:>7.4f} {m['f1']:>7.4f} "
+            f"{name:<20} {m['roc_auc']:>7.4f} {m['pr_auc']:>7.4f} {m['brier']:>7.4f} {m['f1']:>7.4f} "
             f"{m['accuracy']:>7.4f} {m['precision']:>7.4f} {m['recall']:>7.4f}"
         )
     return "\n".join(rows)

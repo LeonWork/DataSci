@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>ChurnGuard AI</title>
-    <link rel="stylesheet" href="/styles.css?v=20260517-rail" />
+    <link rel="stylesheet" href="/styles.css?v=20260518-onboard" />
   </head>
   <body>
     <main class="app">
@@ -69,59 +69,22 @@
             <p>Adjust account, service, and billing attributes.</p>
           </div>
 
-          <div class="preset-row">
-            <button id="highPreset" type="button">High risk preset</button>
-            <button id="lowPreset" type="button">Low risk preset</button>
-          </div>
-
           <form id="profileForm" class="profile-form">
-            <fieldset>
-              <legend>Demographics</legend>
-              <label>Gender<select name="gender"><option>Male</option><option>Female</option></select></label>
-              <label>Senior Citizen<select name="SeniorCitizen"><option>No</option><option>Yes</option></select></label>
-              <label>Partner<select name="Partner"><option>No</option><option>Yes</option></select></label>
-              <label>Dependents<select name="Dependents"><option>No</option><option>Yes</option></select></label>
-            </fieldset>
-
-            <fieldset>
-              <legend>Account</legend>
-              <label>Tenure months<input name="tenure" type="number" min="0" max="72" value="12" /></label>
-              <label>Contract<select name="Contract"><option>Month-to-month</option><option>One year</option><option>Two year</option></select></label>
-              <label>Paperless Billing<select name="PaperlessBilling"><option>Yes</option><option>No</option></select></label>
-              <label>Payment Method<select name="PaymentMethod"><option>Electronic check</option><option>Mailed check</option><option>Bank transfer (automatic)</option><option>Credit card (automatic)</option></select></label>
-            </fieldset>
-
-            <fieldset>
-              <legend>Services</legend>
-              <label>Phone Service<select name="PhoneService"><option>Yes</option><option>No</option></select></label>
-              <label>Multiple Lines<select name="MultipleLines"><option>No</option><option>Yes</option><option>No phone service</option></select></label>
-              <label>Internet Service<select name="InternetService"><option>DSL</option><option>Fiber optic</option><option>No</option></select></label>
-              <label>Online Security<select name="OnlineSecurity"><option>No</option><option>Yes</option><option>No internet service</option></select></label>
-              <label>Online Backup<select name="OnlineBackup"><option>No</option><option>Yes</option><option>No internet service</option></select></label>
-              <label>Device Protection<select name="DeviceProtection"><option>No</option><option>Yes</option><option>No internet service</option></select></label>
-              <label>Tech Support<select name="TechSupport"><option>No</option><option>Yes</option><option>No internet service</option></select></label>
-              <label>Streaming TV<select name="StreamingTV"><option>No</option><option>Yes</option><option>No internet service</option></select></label>
-              <label>Streaming Movies<select name="StreamingMovies"><option>No</option><option>Yes</option><option>No internet service</option></select></label>
-            </fieldset>
-
-            <fieldset>
-              <legend>Charges</legend>
-              <label>Monthly Charges<input name="MonthlyCharges" type="number" min="0" step="0.5" value="65" /></label>
-              <label>Total Charges<input name="TotalCharges" type="number" min="0" step="1" value="780" /></label>
-            </fieldset>
-
+            <div id="dynamicFormFields">
+              <p style="color:var(--gray-400); font-size:14px;">Loading schema...</p>
+            </div>
             <button class="primary" type="submit">Analyze churn risk</button>
           </form>
         </aside>
 
         <section class="workspace">
-          <header class="topbar">
-            <div>
+          <header class="dash-hero">
+            <div class="dash-hero__content">
               <p class="eyebrow">Retention intelligence</p>
               <h1>ChurnGuard AI</h1>
               <p>Score churn risk and explain the factors behind each prediction.</p>
             </div>
-            <div class="user-box">
+            <div class="dash-hero__actions">
               <span id="workspaceBadge"></span>
               <span id="signedInUser"></span>
               <button id="openLab" type="button">Improvement lab</button>
@@ -130,18 +93,19 @@
           </header>
 
           <section id="dashboardPage">
-            <section class="metric-grid">
-              <article class="metric-card"><span>Model</span><strong id="modelType">Random Forest</strong><small>Tuned classifier</small></article>
-              <article class="metric-card"><span>Training AUC</span><strong id="modelAuc">--</strong><small>Ranking quality</small></article>
-              <article class="metric-card"><span>Features</span><strong id="featureCount">--</strong><small>Engineered inputs</small></article>
-              <article class="metric-card"><span>Predictions</span><strong id="totalPredictions">--</strong><small>Workspace total</small></article>
-              <article class="metric-card"><span>High risk</span><strong id="highRiskPredictions">--</strong><small>Accounts flagged</small></article>
-              <article class="metric-card"><span>Learning rows</span><strong id="queuedLearningRows">--</strong><small>Queued for review</small></article>
+            <section class="dash-kpi-strip">
+              <div class="dash-kpi"><div class="dash-kpi__icon" style="background:#dbeafe;color:#2563eb">🤖</div><div><strong id="modelType">--</strong><span>Model</span></div></div>
+              <div class="dash-kpi"><div class="dash-kpi__icon" style="background:#d1fae5;color:#059669">📊</div><div><strong id="modelAuc">--</strong><span>Training AUC</span></div></div>
+              <div class="dash-kpi"><div class="dash-kpi__icon" style="background:#ede9fe;color:#7c3aed">🧬</div><div><strong id="featureCount">--</strong><span>Features</span></div></div>
+              <div class="dash-kpi"><div class="dash-kpi__icon" style="background:#fef3c7;color:#d97706">🎯</div><div><strong id="totalPredictions">--</strong><span>Predictions</span></div></div>
+              <div class="dash-kpi"><div class="dash-kpi__icon" style="background:#fee2e2;color:#dc2626">🚨</div><div><strong id="highRiskPredictions">--</strong><span>High risk</span></div></div>
+              <div class="dash-kpi"><div class="dash-kpi__icon" style="background:#ecfeff;color:#0891b2">📥</div><div><strong id="queuedLearningRows">--</strong><span>Learning rows</span></div></div>
             </section>
 
-            <section id="emptyState" class="empty-state">
-              <h2>Ready to score a customer</h2>
-              <p>Use the sidebar controls or a preset, then run the analysis.</p>
+            <section id="emptyState" class="dash-empty-state">
+              <div class="dash-empty-icon">🔬</div>
+              <h2>Ready to analyze</h2>
+              <p>Fill in the customer profile in the sidebar, then click <strong>"Analyze churn risk"</strong> to generate a detailed risk assessment.</p>
             </section>
 
             <section id="results" class="results hidden">
@@ -237,59 +201,258 @@
 
             <article class="result-card">
               <p class="eyebrow">Learning queue</p>
-              <h2>Improve with labeled company data</h2>
-              <p class="panel-copy">Upload CSVs that include known <code>Churn</code> outcomes. Rows are stored for retraining and drift review.</p>
-              <input id="learningCsv" type="file" accept=".csv" />
+              <h2>Improve with labeled data</h2>
+              <p class="panel-copy">Upload CSVs that include known <code>Churn</code> outcomes. Rows are stored for retraining.</p>
+              <div class="lab-upload-zone" style="margin-top:.75rem">
+                <span class="lab-upload-icon">📁</span>
+                <span>Drag & drop a labeled CSV</span>
+                <input id="learningCsv" type="file" accept=".csv" />
+              </div>
               <div id="learningStatus" class="learning-status"></div>
             </article>
+            </section>
+
+            <section id="adminSection" class="admin-section hidden">
+              <div class="admin-section__header">
+                <p class="eyebrow">Platform Administration</p>
+                <h2>Manage your tenants</h2>
+              </div>
+
+              <div class="admin-grid">
+                <article class="result-card" style="grid-column: 1 / -1;">
+                  <p class="eyebrow">Tenant Overview</p>
+                  <h3>All onboarded companies</h3>
+                  <p class="panel-copy">Real-time status of every workspace on the platform.</p>
+                  <div id="tenantTable" class="table-wrap" style="margin-top:1rem;">
+                    <p style="color:var(--muted)">Loading tenants…</p>
+                  </div>
+                </article>
+
+                <article class="result-card">
+                  <p class="eyebrow">System Health</p>
+                  <h3>Platform metrics</h3>
+                  <div class="kpi-grid" style="margin-top:1rem;">
+                    <div class="kpi"><span id="adminTotalTenants" class="kpi-value">--</span><span class="kpi-label">Tenants</span></div>
+                    <div class="kpi"><span id="adminTotalModels" class="kpi-value">--</span><span class="kpi-label">Trained models</span></div>
+                    <div class="kpi"><span id="adminTotalUsers" class="kpi-value">--</span><span class="kpi-label">Users</span></div>
+                    <div class="kpi"><span id="adminTotalPredictions" class="kpi-value">--</span><span class="kpi-label">Predictions</span></div>
+                  </div>
+                </article>
+
+                <article class="result-card">
+                  <p class="eyebrow">Quick Actions</p>
+                  <h3>Management tools</h3>
+                  <div style="display:flex;flex-direction:column;gap:.75rem;margin-top:1rem;">
+                    <button id="adminRetrainAll" type="button" class="primary" style="width:auto">🔄 Retrain all models</button>
+                    <button id="adminRefreshTenants" type="button" style="width:auto;background:#fff;border:1px solid var(--line);color:var(--ink)">🔃 Refresh tenant list</button>
+                    <p id="adminActionMessage" class="message" style="margin-top:.5rem;"></p>
+                  </div>
+                </article>
+
+                <article class="result-card" style="grid-column: 1 / -1;">
+                  <p class="eyebrow">Onboard Company</p>
+                  <h3>Provision a new workspace</h3>
+                  <p class="panel-copy">Create a new company and its initial admin user.</p>
+                  <form id="onboardForm" class="auth-form" style="margin-top: 1rem;">
+                    <div style="display:flex;gap:1rem;flex-wrap:wrap;">
+                      <label style="flex:1;min-width:150px">Company ID<input name="company_id" placeholder="acme-corp" required /></label>
+                      <label style="flex:1;min-width:150px">Company Name<input name="company_name" placeholder="Acme Corporation" required /></label>
+                      <label style="flex:1;min-width:150px">Owner Username<input name="owner_username" placeholder="admin.acme" required /></label>
+                      <label style="flex:1;min-width:150px">Owner Email<input name="owner_email" type="email" placeholder="admin@acme.com" required /></label>
+                      <label style="flex:1;min-width:150px">Owner Password<input name="owner_password" type="password" minlength="8" required /></label>
+                    </div>
+                    <button type="submit" class="primary" style="margin-top: 1rem; width: auto;">Provision Workspace</button>
+                    <p id="onboardMessage" class="message" style="margin-top: 1rem;"></p>
+                  </form>
+                </article>
+              </div>
             </section>
           </section>
 
           <section id="labPage" class="lab-page hidden">
-            <button id="backToDashboard" class="back-button" type="button">Back to dashboard</button>
-            <div class="lab-hero">
-              <p class="eyebrow">Improvement lab</p>
-              <h2>Demo ways to improve a customer score</h2>
-              <p>Use this page to understand what the model learned and how retention actions can reduce risk signals.</p>
+            <button id="backToDashboard" class="back-button" type="button">← Back to dashboard</button>
+
+            <!-- Hero -->
+            <div class="lab-hero lab-hero--gradient">
+              <div class="lab-hero__content">
+                <p class="eyebrow">Improvement Lab</p>
+                <h2>Understand, improve &amp; retrain your model</h2>
+                <p>Explore your data schema, run what-if scenarios, upload labeled outcomes, and monitor model performance — all from one place.</p>
+              </div>
+              <div class="lab-hero__stats">
+                <div class="lab-stat"><span id="labModelAuc" class="lab-stat__value">--</span><span class="lab-stat__label">Model AUC</span></div>
+                <div class="lab-stat"><span id="labQueuedRows" class="lab-stat__value">--</span><span class="lab-stat__label">Queued rows</span></div>
+                <div class="lab-stat"><span id="labTotalPreds" class="lab-stat__value">--</span><span class="lab-stat__label">Predictions</span></div>
+              </div>
             </div>
-            <div class="lab-grid">
-              <article class="result-card">
-                <p class="eyebrow">Contract demo</p>
-                <h3>Move from monthly to annual</h3>
-                <p class="panel-copy">The model usually treats month-to-month contracts as a major churn driver. Try the sidebar preset, switch Contract to One year or Two year, and rerun the score.</p>
-                <div class="scenario-row"><span>Monthly</span><div class="scenario-track"><div class="scenario-fill" style="width:78%;background:var(--red)"></div></div><span>Higher</span></div>
-                <div class="scenario-row"><span>Annual</span><div class="scenario-track"><div class="scenario-fill" style="width:42%;background:var(--green)"></div></div><span>Lower</span></div>
-              </article>
-              <article class="result-card">
-                <p class="eyebrow">Service demo</p>
-                <h3>Add support coverage</h3>
-                <p class="panel-copy">Missing online security, backup, device protection, or tech support often adds risk for internet customers.</p>
-                <div class="scenario-row"><span>No support</span><div class="scenario-track"><div class="scenario-fill" style="width:70%;background:var(--amber)"></div></div><span>Risk</span></div>
-                <div class="scenario-row"><span>Supported</span><div class="scenario-track"><div class="scenario-fill" style="width:38%;background:var(--green)"></div></div><span>Safer</span></div>
-              </article>
-              <article class="result-card">
-                <p class="eyebrow">Billing demo</p>
-                <h3>Review high monthly charges</h3>
-                <p class="panel-copy">High monthly charges can become a churn signal, especially when paired with short tenure or monthly contracts.</p>
-                <div class="scenario-row"><span>High bill</span><div class="scenario-track"><div class="scenario-fill" style="width:76%;background:var(--red)"></div></div><span>Risk</span></div>
-                <div class="scenario-row"><span>Bundle</span><div class="scenario-track"><div class="scenario-fill" style="width:48%;background:var(--green)"></div></div><span>Lower</span></div>
-              </article>
-              <article class="result-card">
-                <p class="eyebrow">Model learning</p>
-                <h3>Train on your own outcomes</h3>
-                <p class="panel-copy">Upload labeled CSVs with a Churn column in the Learning Queue. The next training run includes those rows, so the model adapts to the kinds of customers your companies actually serve.</p>
-                <ul class="recommendations">
-                  <li>Use unlabeled CSVs for scoring.</li>
-                  <li>Use labeled CSVs for learning.</li>
-                  <li>Keep the schema aligned with the Telco fields shown in the sidebar.</li>
-                </ul>
-              </article>
+
+            <!-- Tab bar -->
+            <div class="lab-tabs">
+              <button class="lab-tab active" data-tab="lab-explore">🔍 Explore</button>
+              <button class="lab-tab" data-tab="lab-whatif">⚡ What-If</button>
+              <button class="lab-tab" data-tab="lab-learn">📈 Train &amp; Learn</button>
+              <button class="lab-tab" data-tab="lab-export">📤 Export</button>
             </div>
+
+            <!-- TAB 1: Explore -->
+            <div id="lab-explore" class="lab-panel">
+              <div class="lab-grid">
+                <article class="result-card">
+                  <p class="eyebrow">Schema Inspector</p>
+                  <h3>Your data columns</h3>
+                  <p class="panel-copy">The model was trained on these features, dynamically inferred from your uploaded CSV.</p>
+                  <div id="labSchemaView" style="margin-top:.75rem">
+                    <p style="color:var(--gray-400);font-size:14px;">Loading schema…</p>
+                  </div>
+                </article>
+                <article class="result-card">
+                  <p class="eyebrow">Model Performance</p>
+                  <h3>Current metrics</h3>
+                  <p class="panel-copy">Live accuracy metrics from the most recent training run.</p>
+                  <div id="labModelMetrics" class="lab-metrics-grid" style="margin-top:.75rem">
+                    <p style="color:var(--gray-400);font-size:14px;">Loading metrics…</p>
+                  </div>
+                </article>
+                <article class="result-card" style="grid-column: 1 / -1;">
+                  <p class="eyebrow">How it works</p>
+                  <h3>The ChurnGuard ML pipeline</h3>
+                  <p class="panel-copy">Your data flows through 4 stages — each one customizable to your business.</p>
+                  <div class="lab-pipeline">
+                    <div class="pipeline-step"><div class="pipeline-icon">📊</div><strong>Ingest</strong><span>Upload CSV with customer attributes + Churn label</span></div>
+                    <div class="pipeline-arrow">→</div>
+                    <div class="pipeline-step"><div class="pipeline-icon">🔬</div><strong>Preprocess</strong><span>Auto-detect numerical vs categorical, handle missing values</span></div>
+                    <div class="pipeline-arrow">→</div>
+                    <div class="pipeline-step"><div class="pipeline-icon">🧠</div><strong>Train</strong><span>Logistic Regression with balanced class weights, cross-validated</span></div>
+                    <div class="pipeline-arrow">→</div>
+                    <div class="pipeline-step"><div class="pipeline-icon">🚀</div><strong>Deploy</strong><span>Tenant-isolated model served via REST API, live predictions</span></div>
+                  </div>
+                </article>
+              </div>
+            </div>
+
+            <!-- TAB 2: What-If -->
+            <div id="lab-whatif" class="lab-panel hidden">
+              <div class="lab-grid">
+                <article class="result-card" style="grid-column: 1 / -1;">
+                  <p class="eyebrow">What-If Scenario Builder</p>
+                  <h3>Compare two customer profiles side-by-side</h3>
+                  <p class="panel-copy">Fill out the sidebar form with Profile A values, score it, then change values and score again. The results panel shows the delta.</p>
+                  <div class="whatif-instructions">
+                    <div class="whatif-step"><span class="whatif-num">1</span><span>Fill the sidebar form with your <strong>baseline</strong> customer profile.</span></div>
+                    <div class="whatif-step"><span class="whatif-num">2</span><span>Click <strong>"Analyze churn risk"</strong> to score Profile A.</span></div>
+                    <div class="whatif-step"><span class="whatif-num">3</span><span>Change one or more fields (e.g. switch contract type, add a service).</span></div>
+                    <div class="whatif-step"><span class="whatif-num">4</span><span>Score again — the dashboard shows the <strong>before vs after delta</strong>.</span></div>
+                  </div>
+                </article>
+                <article class="result-card">
+                  <p class="eyebrow">Tips</p>
+                  <h3>High-impact changes</h3>
+                  <ul class="recommendations">
+                    <li>Contract type is typically the #1 churn driver — try switching between monthly and annual.</li>
+                    <li>Adding support services (backup, security) often reduces risk by 15–30%.</li>
+                    <li>Tenure interacts with everything — short-tenured customers are inherently riskier.</li>
+                    <li>High monthly charges compound risk, especially with month-to-month contracts.</li>
+                  </ul>
+                </article>
+                <article class="result-card">
+                  <p class="eyebrow">Interpreting Results</p>
+                  <h3>Reading the risk factors</h3>
+                  <ul class="recommendations">
+                    <li><strong>Red bars</strong> = features pushing churn probability <em>up</em>.</li>
+                    <li><strong>Green bars</strong> = features pushing churn probability <em>down</em>.</li>
+                    <li>The wider the bar, the stronger that feature's influence on the prediction.</li>
+                    <li>Click any factor to see a detailed impact breakdown.</li>
+                  </ul>
+                </article>
+              </div>
+            </div>
+
+            <!-- TAB 3: Train & Learn -->
+            <div id="lab-learn" class="lab-panel hidden">
+              <div class="lab-grid">
+                <article class="result-card">
+                  <p class="eyebrow">Learning Queue</p>
+                  <h3>Upload labeled training data</h3>
+                  <p class="panel-copy">Upload CSVs with a <code>Churn</code> column (Yes/No). Rows are queued for the next model retrain.</p>
+                  <div class="lab-upload-zone" id="labDropZone">
+                    <span class="lab-upload-icon">📁</span>
+                    <span>Drag &amp; drop a CSV or click to browse</span>
+                    <input id="labLearningCsv" type="file" accept=".csv" />
+                  </div>
+                  <div id="labLearningStatus" class="learning-status" style="margin-top:.75rem;"></div>
+                </article>
+                <article class="result-card">
+                  <p class="eyebrow">Seed Data Upload</p>
+                  <h3>Initialize your schema</h3>
+                  <p class="panel-copy">First-time users: upload a seed CSV to auto-detect your company's data schema and unlock the sidebar form.</p>
+                  <div class="lab-upload-zone">
+                    <span class="lab-upload-icon">🌱</span>
+                    <span>Upload seed CSV to generate schema</span>
+                    <input id="labSeedCsv" type="file" accept=".csv" />
+                  </div>
+                  <div id="labSeedStatus" class="learning-status" style="margin-top:.75rem;"></div>
+                </article>
+                <article class="result-card" style="grid-column: 1 / -1;">
+                  <p class="eyebrow">Training Guide</p>
+                  <h3>How to improve your model</h3>
+                  <div class="lab-training-tips">
+                    <div class="training-tip">
+                      <strong>📋 Data Quality</strong>
+                      <p>Ensure your CSV has consistent column names and no more than 5% missing values. The system auto-fills blanks, but clean data trains better models.</p>
+                    </div>
+                    <div class="training-tip">
+                      <strong>⚖️ Class Balance</strong>
+                      <p>Aim for at least 15% churn rate in your training data. If your data is very imbalanced, the model uses balanced class weights to compensate.</p>
+                    </div>
+                    <div class="training-tip">
+                      <strong>📊 Volume</strong>
+                      <p>More data = better predictions. We recommend at least 500 rows for a reliable model. Each upload adds to your cumulative training set.</p>
+                    </div>
+                    <div class="training-tip">
+                      <strong>🔄 Retraining</strong>
+                      <p>After uploading new data, ask your platform admin to run the retraining pipeline. Models are versioned — the old one stays until the new one is ready.</p>
+                    </div>
+                  </div>
+                </article>
+              </div>
+            </div>
+
+            <!-- TAB 4: Export -->
+            <div id="lab-export" class="lab-panel hidden">
+              <div class="lab-grid">
+                <article class="result-card">
+                  <p class="eyebrow">Export Tools</p>
+                  <h3>Download your data</h3>
+                  <p class="panel-copy">Export prediction results, high-risk customer lists, or your raw schema definition.</p>
+                  <div style="display:flex;flex-direction:column;gap:.75rem;margin-top:1rem;">
+                    <button id="labExportSchema" type="button" class="primary" style="width:auto;">📋 Export Schema (JSON)</button>
+                    <button id="labExportHighRisk" type="button" style="width:auto;background:#fff;border:1px solid var(--line);color:var(--ink);">📊 Export High-Risk Customers (CSV)</button>
+                    <button id="labExportTemplate" type="button" style="width:auto;background:#fff;border:1px solid var(--line);color:var(--ink);">📝 Download CSV Template</button>
+                  </div>
+                  <p id="labExportMessage" class="message" style="margin-top:.75rem;"></p>
+                </article>
+                <article class="result-card">
+                  <p class="eyebrow">API Access</p>
+                  <h3>Integrate programmatically</h3>
+                  <p class="panel-copy">Use the REST API to score customers from your own systems.</p>
+                  <div class="lab-code-block">
+                    <pre><code>curl -X POST /predict \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"feature1": "value", ...}'</code></pre>
+                  </div>
+                  <p class="panel-copy" style="margin-top:.75rem;">
+                    <strong>Endpoints:</strong> <code>/predict</code>, <code>/predict-csv</code>, <code>/model-info</code>, <code>/admin/schema</code>
+                  </p>
+                </article>
+              </div>
+            </div>
+
           </section>
         </section>
       </section>
     </main>
 
-    <script src="/app.js?v=20260518-saas"></script>
+    <script src="/app.js?v=20260518-lab-v3"></script>
   </body>
 </html>

@@ -41,42 +41,6 @@ from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-# ── Column groups ─────────────────────────────────────────────────────────────
-#   Derived after feature engineering; updated if schema changes.
-
-NUMERICAL_FEATURES = [
-    "tenure",
-    "MonthlyCharges",
-    "TotalCharges",
-    "clv",
-    "avg_monthly_charge",
-    "charge_increase",
-    "contract_stability",
-    "service_bundle_score",
-    "has_internet",
-    "is_high_value",
-]
-
-CATEGORICAL_FEATURES = [
-    "gender",
-    "Partner",
-    "Dependents",
-    "PhoneService",
-    "MultipleLines",
-    "InternetService",
-    "OnlineSecurity",
-    "OnlineBackup",
-    "DeviceProtection",
-    "TechSupport",
-    "StreamingTV",
-    "StreamingMovies",
-    "Contract",
-    "PaperlessBilling",
-    "PaymentMethod",
-    "tenure_band",
-    "SeniorCitizen",
-]
-
 TARGET_COL = "Churn"
 TEST_SIZE = 0.2
 RANDOM_STATE = 42
@@ -114,22 +78,22 @@ def _categorical_transformer() -> Pipeline:
 # ── Public API ────────────────────────────────────────────────────────────────
 
 def build_pipeline(
-    numerical_features: list[str] | None = None,
-    categorical_features: list[str] | None = None,
+    numerical_features: list[str],
+    categorical_features: list[str],
 ) -> ColumnTransformer:
     """
     Build and return a ColumnTransformer that scales numerics and
     one-hot encodes categoricals.
 
     Args:
-        numerical_features:  Override default numerical column list.
-        categorical_features: Override default categorical column list.
+        numerical_features:  List of numerical feature names.
+        categorical_features: List of categorical feature names.
 
     Returns:
         Unfitted sklearn ColumnTransformer.
     """
-    num_cols = numerical_features or NUMERICAL_FEATURES
-    cat_cols = categorical_features or CATEGORICAL_FEATURES
+    num_cols = numerical_features
+    cat_cols = categorical_features
 
     preprocessor = ColumnTransformer(
         transformers=[
@@ -195,8 +159,8 @@ def run_full_pipeline(
     )
 
     # Only keep columns that actually exist in X
-    num_cols = [c for c in NUMERICAL_FEATURES if c in X.columns]
-    cat_cols = [c for c in CATEGORICAL_FEATURES if c in X.columns]
+    num_cols = [c for c in X.columns if pd.api.types.is_numeric_dtype(X[c])]
+    cat_cols = [c for c in X.columns if c not in num_cols]
 
     pipe = build_pipeline(
         numerical_features=num_cols,

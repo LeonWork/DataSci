@@ -119,6 +119,26 @@ learning_rows = Table(
     Column("created_at", DateTime(timezone=True), nullable=False, default=lambda: _now()),
 )
 
+audit_logs = Table(
+    "audit_logs",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("company_id", String(80), ForeignKey("companies.id"), nullable=False),
+    Column("username", String(80), nullable=False),
+    Column("event_type", String(80), nullable=False),
+    Column("details", Text, nullable=True),
+    Column("created_at", DateTime(timezone=True), nullable=False, default=lambda: _now()),
+)
+
+company_schemas = Table(
+    "company_schemas",
+    metadata,
+    Column("company_id", String(80), ForeignKey("companies.id"), primary_key=True),
+    Column("schema_json", Text, nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False, default=lambda: _now()),
+    Column("updated_at", DateTime(timezone=True), nullable=False, default=lambda: _now(), onupdate=lambda: _now()),
+)
+
 _ENGINE: Engine | None = None
 _ENGINE_KEY: str | None = None
 
@@ -400,6 +420,52 @@ def record_learning_rows(
 
     with _connect() as connection:
         connection.execute(learning_rows.insert(), payload)
+
+
+def record_audit_event(
+    *,
+    username: str,
+    event_type: str,
+    details: str = "",
+    company_id: str = DEFAULT_COMPANY_ID,
+) -> None:
+    init_storage()
+    with _connect() as connection:
+        connection.execute(
+            audit_logs.insert().values(
+                company_id=company_id,
+                username=username,
+                event_type=event_type,
+                details=details,
+                created_at=_now(),
+            )
+        )
+
+
+def save_company_schema(company_id: str, schema_dict: dict) -> None:
+    init_storage()
+    import json
+    payload = json.dumps(schema_dict)
+    with _connect() as connection:
+        connection.execute(company_schemas.delete().where(company_schemas.c.company_id == company_id))
+        connection.execute(company_schemas.insert().values(
+            company_id=company_id,
+            schema_json=payload,
+            created_at=_now(),
+            updated_at=_now()
+        ))
+
+
+def get_company_schema(company_id: str) -> dict | None:
+    init_storage()
+    from sqlalchemy import select
+    import json
+    with _connect() as connection:
+        query = select(company_schemas.c.schema_json).where(company_schemas.c.company_id == company_id)
+        row = connection.execute(query).fetchone()
+        if row:
+            return json.loads(row[0])
+    return None
 
 
 def admin_summary(

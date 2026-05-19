@@ -22,9 +22,7 @@ from src.utils.logger import get_logger
 logger = get_logger(__name__)
 
 ROOT = Path(__file__).resolve().parents[2]
-MODEL_PATH    = ROOT / "models" / "churn_model.joblib"
-PIPELINE_PATH = ROOT / "models" / "churn_pipeline.joblib"
-META_PATH     = ROOT / "models" / "model_meta.json"
+MODELS_DIR = ROOT / "models"
 
 MODEL_VERSION = "1.0.0"
 
@@ -32,23 +30,38 @@ MODEL_VERSION = "1.0.0"
 class ChurnPredictor:
     """Wraps the sklearn preprocessing pipeline and trained classifier."""
 
-    def __init__(self) -> None:
+    def __init__(self, company_id: str = "global") -> None:
+        self.company_id = company_id
         self.model = None
         self.pipeline = None
         self.feature_names: list[str] = []
         self.training_metrics: dict = {}
         self._loaded = False
+        
+        self.model_path = MODELS_DIR / f"{company_id}_model.joblib"
+        self.pipeline_path = MODELS_DIR / f"{company_id}_pipeline.joblib"
+        self.meta_path = MODELS_DIR / f"{company_id}_model_meta.json"
+        
+        # Fallbacks for backwards compatibility
+        if not self.model_path.exists() and company_id != "global":
+            self.model_path = MODELS_DIR / "global_model.joblib"
+            self.pipeline_path = MODELS_DIR / "global_pipeline.joblib"
+            self.meta_path = MODELS_DIR / "global_model_meta.json"
+            
+        if not self.model_path.exists():
+            self.model_path = MODELS_DIR / "churn_model.joblib"
+            self.pipeline_path = MODELS_DIR / "churn_pipeline.joblib"
+            self.meta_path = MODELS_DIR / "model_meta.json"
 
     def load(self) -> None:
-        if not MODEL_PATH.exists():
+        if not self.model_path.exists():
             raise FileNotFoundError(
-                f"Model not found at {MODEL_PATH}.\n"
-                "Run:  python scripts/train_and_save.py"
+                f"Model not found for {self.company_id} at {self.model_path}."
             )
-        self.model    = joblib.load(MODEL_PATH)
-        self.pipeline = joblib.load(PIPELINE_PATH)
-        if META_PATH.exists():
-            meta = json.loads(META_PATH.read_text())
+        self.model    = joblib.load(self.model_path)
+        self.pipeline = joblib.load(self.pipeline_path)
+        if self.meta_path.exists():
+            meta = json.loads(self.meta_path.read_text())
             self.feature_names    = meta.get("feature_names", [])
             self.training_metrics = meta.get("metrics", {})
         self._loaded = True
@@ -78,7 +91,8 @@ class ChurnPredictor:
     ) -> dict:
         X = self._preprocess(raw)
         prob = float(self.model.predict_proba(X)[0, 1])
-        pred = prob >= 0.5
+        # Tuned threshold: Lowered from 0.5 to 0.35 to prioritize recall
+        pred = prob >= 0.35
 
         if prob < 0.30:
             risk = "Low"
@@ -132,5 +146,16 @@ class ChurnPredictor:
             return []
 
 
-# Singleton — loaded once at startup
-predictor = ChurnPredictor()
+class ModelRouter:
+    def __init__(self) -> None:
+        self.predictors: dict[str, ChurnPredictor] = {}
+
+    def get_predictor(self, company_id: str) -> ChurnPredictor:
+        if company_id not in self.predictors:
+            predictor = ChurnPredictor(company_id)
+            predictor.load()
+            self.predictors[company_id] = predictor
+        return self.predictors[company_id]
+
+# Singleton router loaded once at startup
+router = ModelRouter()

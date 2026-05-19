@@ -261,100 +261,148 @@ legend {
   padding: 1.25rem 1.35rem 1.75rem;
 }
 
-.topbar {
+/* ── Dashboard Hero ─────────────────────────────────────────────── */
+.dash-hero {
+  background: linear-gradient(135deg, #111827 0%, #1e3a5f 50%, #0891b2 100%);
+  color: #ffffff;
+  border-radius: 12px;
+  padding: 1.8rem 2rem;
   display: flex;
   justify-content: space-between;
-  gap: 1.5rem;
-  align-items: flex-start;
-  border-bottom: 1px solid var(--line);
-  padding-bottom: 1rem;
+  align-items: center;
+  gap: 2rem;
+  box-shadow: 0 12px 40px rgba(8, 145, 178, 0.2);
 }
 
-.topbar h1 {
-  margin: 0;
-  font-size: clamp(2rem, 4vw, 3rem);
-  line-height: 1;
-}
+.dash-hero .eyebrow { color: #67e8f9; }
+.dash-hero h1 { margin: 0; font-size: clamp(2rem, 4vw, 3rem); line-height: 1; }
+.dash-hero p:last-child { margin: 0.5rem 0 0; color: rgba(255,255,255,0.65); }
 
-.topbar p:last-child {
-  margin: 0.6rem 0 0;
-  color: var(--muted);
-}
-
-.user-box {
+.dash-hero__actions {
   display: flex;
   gap: 0.6rem;
   align-items: center;
-  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 #signedInUser,
 #workspaceBadge {
-  color: #344054;
-  background: #eef4ff;
-  border: 1px solid #c7d7fe;
-  border-radius: 999px;
   padding: 0.36rem 0.72rem;
+  border-radius: 999px;
   font-size: 0.82rem;
   font-weight: 700;
 }
 
+#signedInUser {
+  color: #ffffff;
+  background: rgba(255,255,255,0.15);
+  border: 1px solid rgba(255,255,255,0.2);
+}
+
 #workspaceBadge {
-  color: #075985;
-  background: #ecfeff;
-  border-color: #a5f3fc;
+  color: #67e8f9;
+  background: rgba(103,232,249,0.1);
+  border: 1px solid rgba(103,232,249,0.25);
 }
 
 #logoutButton {
-  color: var(--ink);
-  background: #ffffff;
-  border: 1px solid var(--line);
+  color: #ffffff;
+  background: rgba(255,255,255,0.1);
+  border: 1px solid rgba(255,255,255,0.2);
   padding: 0.5rem 0.7rem;
 }
 
 #openLab {
-  color: var(--blue);
-  background: #eef4ff;
-  border: 1px solid #c7d7fe;
-  padding: 0.5rem 0.7rem;
+  color: #111827;
+  background: #67e8f9;
+  border: none;
+  padding: 0.5rem 0.8rem;
 }
 
-.metric-grid {
+/* ── Dashboard KPI Strip ────────────────────────────────────────── */
+.dash-kpi-strip {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 1rem;
-  margin: 0.85rem 0;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 0.75rem;
+  margin: 1rem 0;
 }
 
-.metric-card,
-.empty-state,
-.result-card {
+.dash-kpi {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.85rem 1rem;
   background: var(--panel);
   border: 1px solid var(--line);
-  border-radius: 8px;
-  box-shadow: 0 8px 22px rgba(16, 24, 40, 0.05);
+  border-radius: 10px;
+  box-shadow: 0 4px 12px rgba(16, 24, 40, 0.04);
 }
 
-.metric-card {
-  padding: 1rem;
+.dash-kpi__icon {
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  font-size: 1.15rem;
+  flex-shrink: 0;
 }
 
-.metric-card span {
+.dash-kpi strong {
+  display: block;
+  font-size: 1.1rem;
+  line-height: 1.15;
+}
+
+.dash-kpi span {
   color: var(--muted);
-  font-size: 0.78rem;
-  font-weight: 800;
+  font-size: 0.72rem;
+  font-weight: 700;
   text-transform: uppercase;
 }
 
-.metric-card strong {
-  display: block;
-  margin-top: 0.35rem;
-  font-size: 1.45rem;
+/* ── Dashboard Empty State ──────────────────────────────────────── */
+.dash-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: 3rem 1.5rem;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: 0 8px 22px rgba(16, 24, 40, 0.05);
 }
 
-.metric-card small {
-  color: var(--muted);
+.dash-empty-icon {
+  font-size: 3rem;
+  margin-bottom: 0.75rem;
 }
+
+.dash-empty-state h2 { margin: 0 0 0.3rem; }
+.dash-empty-state p { margin: 0; color: var(--muted); max-width: 420px; }
+
+/* ── Admin Section ──────────────────────────────────────────────── */
+.admin-section {
+  margin-top: 1.5rem;
+  padding-top: 1.5rem;
+  border-top: 2px solid var(--line);
+}
+
+.admin-section__header {
+  margin-bottom: 1rem;
+}
+
+.admin-section__header .eyebrow { color: var(--cyan); }
+.admin-section__header h2 { margin: 0; }
+
+.admin-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.85rem;
+}
+
+.admin-grid h3 { margin: 0 0 0.35rem; }
 
 .empty-state {
   padding: 1rem 1.1rem;
@@ -699,7 +747,91 @@ legend {
   margin-bottom: 1rem;
 }
 
-.lab-hero {
+/* ── Lab Hero Gradient ──────────────────────────────────────────── */
+.lab-hero--gradient {
+  background: linear-gradient(135deg, #111827 0%, #1e3a5f 50%, #0891b2 100%);
+  color: #ffffff;
+  border: none;
+  border-radius: 12px;
+  padding: 2rem 2.5rem;
+  margin-bottom: 1rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 2rem;
+  box-shadow: 0 12px 40px rgba(8, 145, 178, 0.2);
+}
+
+.lab-hero--gradient .eyebrow { color: #67e8f9; }
+.lab-hero--gradient h2 { margin: 0; font-size: clamp(1.6rem, 3vw, 2.2rem); }
+.lab-hero--gradient p:last-child { color: rgba(255,255,255,0.7); margin-bottom: 0; max-width: 560px; }
+
+.lab-hero__stats {
+  display: flex;
+  gap: 1.5rem;
+  flex-shrink: 0;
+}
+
+.lab-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 1rem 1.5rem;
+  background: rgba(255,255,255,0.1);
+  border: 1px solid rgba(255,255,255,0.15);
+  border-radius: 10px;
+  backdrop-filter: blur(8px);
+}
+
+.lab-stat__value {
+  font-size: 1.8rem;
+  font-weight: 800;
+  color: #ffffff;
+}
+
+.lab-stat__label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: rgba(255,255,255,0.6);
+  text-transform: uppercase;
+  margin-top: 0.2rem;
+}
+
+/* ── Lab Tabs ───────────────────────────────────────────────────── */
+.lab-tabs {
+  display: flex;
+  gap: 0.35rem;
+  padding: 0.3rem;
+  background: #eef2f7;
+  border-radius: 10px;
+  margin-bottom: 1rem;
+}
+
+.lab-tab {
+  flex: 1;
+  padding: 0.72rem 1rem;
+  color: var(--muted);
+  background: transparent;
+  border-radius: 8px;
+  font-size: 0.88rem;
+  transition: all 0.2s ease;
+}
+
+.lab-tab.active {
+  color: var(--ink);
+  background: #ffffff;
+  box-shadow: 0 4px 12px rgba(16, 24, 40, 0.08);
+}
+
+.lab-tab:hover:not(.active) {
+  color: var(--ink);
+  background: rgba(255,255,255,0.5);
+}
+
+.lab-panel { animation: fadeIn 0.3s ease; }
+@keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+
+.lab-hero:not(.lab-hero--gradient) {
   background: #ffffff;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -708,12 +840,12 @@ legend {
   margin-bottom: 1rem;
 }
 
-.lab-hero h2 {
+.lab-hero:not(.lab-hero--gradient) h2 {
   margin: 0;
   font-size: clamp(1.8rem, 3vw, 2.6rem);
 }
 
-.lab-hero p:last-child {
+.lab-hero:not(.lab-hero--gradient) p:last-child {
   color: var(--muted);
   margin-bottom: 0;
 }
@@ -727,6 +859,209 @@ legend {
 .lab-grid h3 {
   margin: 0 0 0.35rem;
 }
+
+/* ── Pipeline Visualization ─────────────────────────────────────── */
+.lab-pipeline {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  margin-top: 1rem;
+  overflow-x: auto;
+}
+
+.pipeline-step {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: 1.2rem 0.8rem;
+  background: #f8fafc;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  gap: 0.35rem;
+}
+
+.pipeline-step strong { font-size: 0.92rem; }
+.pipeline-step span { font-size: 0.78rem; color: var(--muted); line-height: 1.3; }
+
+.pipeline-icon {
+  font-size: 1.6rem;
+  width: 48px;
+  height: 48px;
+  display: grid;
+  place-items: center;
+  background: #eef4ff;
+  border-radius: 12px;
+  margin-bottom: 0.3rem;
+}
+
+.pipeline-arrow {
+  display: grid;
+  place-items: center;
+  font-size: 1.3rem;
+  color: var(--muted);
+  padding: 0 0.4rem;
+  flex-shrink: 0;
+}
+
+/* ── Schema Chips ───────────────────────────────────────────────── */
+.schema-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.schema-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.35rem 0.65rem;
+  border-radius: 6px;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.schema-chip--num {
+  color: #1e40af;
+  background: #dbeafe;
+  border: 1px solid #93c5fd;
+}
+
+.schema-chip--cat {
+  color: #7e22ce;
+  background: #f3e8ff;
+  border: 1px solid #c4b5fd;
+}
+
+/* ── Lab Metrics Grid ───────────────────────────────────────────── */
+.lab-metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0.6rem;
+}
+
+.lab-metric {
+  padding: 0.75rem;
+  background: #f8fafc;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  text-align: center;
+}
+
+.lab-metric__value {
+  display: block;
+  font-size: 1.4rem;
+  font-weight: 800;
+}
+
+.lab-metric__label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+}
+
+/* ── Upload Zone ────────────────────────────────────────────────── */
+.lab-upload-zone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 2rem 1rem;
+  border: 2px dashed var(--line);
+  border-radius: 12px;
+  background: #fafbfc;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  position: relative;
+  margin-top: 0.75rem;
+  color: var(--muted);
+  font-size: 0.88rem;
+  font-weight: 600;
+}
+
+.lab-upload-zone:hover {
+  border-color: var(--cyan);
+  background: #ecfeff;
+}
+
+.lab-upload-zone input[type="file"] {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.lab-upload-icon { font-size: 2rem; }
+
+/* ── Training Tips ──────────────────────────────────────────────── */
+.lab-training-tips {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+}
+
+.training-tip {
+  padding: 1rem;
+  background: #f8fafc;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.training-tip strong { display: block; margin-bottom: 0.35rem; font-size: 0.92rem; }
+.training-tip p { margin: 0; color: var(--muted); font-size: 0.84rem; line-height: 1.45; }
+
+/* ── What-If Instructions ───────────────────────────────────────── */
+.whatif-instructions {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.75rem;
+  margin-top: 1rem;
+}
+
+.whatif-step {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 0.5rem;
+  padding: 1rem;
+  background: #f8fafc;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  font-size: 0.84rem;
+  color: #344054;
+}
+
+.whatif-num {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  background: var(--blue);
+  color: #ffffff;
+  border-radius: 50%;
+  font-weight: 800;
+  font-size: 0.92rem;
+  flex-shrink: 0;
+}
+
+/* ── Code Block ─────────────────────────────────────────────────── */
+.lab-code-block {
+  margin-top: 0.75rem;
+  background: #111827;
+  color: #a5f3fc;
+  border-radius: 10px;
+  padding: 1rem 1.2rem;
+  overflow-x: auto;
+}
+
+.lab-code-block pre { margin: 0; }
+.lab-code-block code { font-family: "JetBrains Mono", "Fira Code", monospace; font-size: 0.82rem; line-height: 1.5; }
+
 
 .analysis-grid h2 {
   margin: 0 0 0.35rem;
@@ -920,4 +1255,66 @@ th {
     grid-column: auto;
     grid-row: auto;
   }
+}
+
+/* ── Admin KPI grid ──────────────────────────────────────────────── */
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0.75rem;
+}
+
+.kpi {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 1rem;
+  background: #f8fafc;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.kpi-value {
+  font-size: 1.8rem;
+  font-weight: 800;
+  color: var(--ink);
+}
+
+.kpi-label {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  margin-top: 0.25rem;
+}
+
+/* ── Admin tenant table ──────────────────────────────────────────── */
+#tenantTable table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.88rem;
+}
+
+#tenantTable th {
+  text-align: left;
+  padding: 0.6rem 0.75rem;
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  border-bottom: 2px solid var(--line);
+}
+
+#tenantTable td {
+  padding: 0.7rem 0.75rem;
+  border-bottom: 1px solid var(--line);
+  vertical-align: middle;
+}
+
+#tenantTable tr:last-child td {
+  border-bottom: 0;
+}
+
+#tenantTable tr:hover td {
+  background: #f8fafc;
 }

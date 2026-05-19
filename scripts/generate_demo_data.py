@@ -18,7 +18,7 @@ import numpy as np
 import pandas as pd
 
 RNG = np.random.default_rng(42)
-N   = 7043
+N   = 50000
 OUT = ROOT / "data" / "raw" / "WA_Fn-UseC_-Telco-Customer-Churn.csv"
 
 
