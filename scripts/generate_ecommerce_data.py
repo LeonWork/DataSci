@@ -29,11 +29,11 @@ def main() -> None:
     # Churn probability logic
     churn_logit = (
         -2.0
-        + (days_since_last_purchase > 180) * 1.5
-        + (support_tickets > 3) * 1.2
-        - (subscription_tier == "Premium") * 1.0
-        - (website_visits_last_month > 20) * 0.8
-        + RNG.normal(0, 0.5, N)
+        + (days_since_last_purchase > 180) * 2.2
+        + (support_tickets > 3) * 1.8
+        - (subscription_tier == "Premium") * 1.5
+        - (website_visits_last_month > 20) * 1.2
+        + RNG.normal(0, 0.02, N)
     )
     churn_prob = 1 / (1 + np.exp(-churn_logit))
     churn = np.where(RNG.random(N) < churn_prob, "Yes", "No")

@@ -33,8 +33,9 @@ from src.data.pipeline import (
 )
 from src.data.load_data import load_raw
 from src.models.evaluate import compute_metrics
-from src.models.train import train_logistic_regression
-from src.api.storage import engine, learning_rows, company_schemas, get_company_schema, init_storage
+from src.models.train import train_all_baselines
+from src.models.tune import run_study, get_best_model
+from src.api.storage import engine, learning_rows, company_schemas, get_company_schema, init_storage, companies
 from sqlalchemy import select
 from src.utils.logger import get_logger
 from sklearn.model_selection import train_test_split
@@ -105,12 +106,23 @@ def load_training_data(company_id: str = "global") -> pd.DataFrame:
                 query = query.where(learning_rows.c.company_id == company_id)
             rows = conn.execute(query).fetchall()
         if rows:
-            db_records = [json.loads(r[0]) for r in rows]
-            db_feedback = pd.DataFrame(db_records)
-            if company_id == "global":
-                db_feedback = _align_training_columns(db_feedback, df_reference, source_prefix="DB")
-            logger.info("Including %d labeled rows from Postgres database queue", len(db_feedback))
-            datasets.append(("postgres_queue", db_feedback))
+            db_records = []
+            for r in rows:
+                rec = json.loads(r[0])
+                if company_id == "global":
+                    # Filter out incompatible schemas (e.g. E-Commerce) by ensuring core columns are present
+                    if not all(col in rec for col in ["tenure", "MonthlyCharges", "Contract"]):
+                        continue
+                db_records.append(rec)
+            
+            if db_records:
+                db_feedback = pd.DataFrame(db_records)
+                if company_id == "global":
+                    db_feedback = _align_training_columns(db_feedback, df_reference, source_prefix="DB")
+                logger.info("Including %d labeled rows from Postgres database queue", len(db_feedback))
+                datasets.append(("postgres_queue", db_feedback))
+            else:
+                logger.info("No compatible database queue rows found.")
     except Exception as e:
         logger.warning("Could not fetch database learning rows: %s", e)
 
@@ -208,20 +220,31 @@ def train_for_company(company_id: str) -> None:
     X_train_t = pipe.fit_transform(X_train)
     X_test_t  = pipe.transform(X_test)
 
-    logger.info("Training Logistic Regression model for production …")
-    result = train_logistic_regression(
-        X_train_t, y_train,
-        X_test_t,  y_test,
-        params={
-            "max_iter": 2000,
-            "C": 0.5,
-            "class_weight": "balanced",
-            "solver": "liblinear",
-        },
-        log_to_mlflow=False,
-    )
-    model   = result["model"]
-    metrics = result["metrics"]
+    logger.info("Training and evaluating all baseline models …")
+    baselines = train_all_baselines(X_train_t, y_train, X_test_t, y_test, log_to_mlflow=False)
+    
+    try:
+        logger.info("Running Optuna hyperparameter optimization on XGBoost …")
+        study = run_study(X_train_t, y_train, n_trials=30, show_progress=False)
+        tuned_xgb = get_best_model(study, X_train_t, y_train)
+        tuned_metrics = compute_metrics(tuned_xgb, X_test_t, y_test)
+        logger.info("XGBoost_Tuned → AUC=%.4f  F1=%.4f", tuned_metrics["roc_auc"], tuned_metrics["f1"])
+        baselines["XGBoost_Tuned"] = {
+            "model": tuned_xgb,
+            "metrics": tuned_metrics,
+        }
+    except Exception as e:
+        logger.warning("Optuna hyperparameter tuning failed: %s. Using baselines only.", e)
+
+    # Find the model with the highest test ROC-AUC score
+    best_model_name = max(baselines.keys(), key=lambda k: baselines[k]["metrics"]["roc_auc"])
+    best_model_info = baselines[best_model_name]
+    model = best_model_info["model"]
+    metrics = best_model_info["metrics"]
+
+    logger.info("=========================================")
+    logger.info("Selected BEST model: %s with Test AUC: %.4f", best_model_name, metrics["roc_auc"])
+    logger.info("=========================================")
 
     # Feature names from pipeline
     try:
@@ -242,7 +265,7 @@ def train_for_company(company_id: str) -> None:
         "metrics":       metrics,
         "num_features":  num_cols,
         "cat_features":  cat_cols,
-        "model_family":  "LogisticRegression",
+        "model_family":  best_model_name,
     }, indent=2))
 
     logger.info("Saved model      → %s", model_path)
@@ -260,17 +283,17 @@ def main() -> None:
     cid = sys.argv[1] if len(sys.argv) > 1 else "global"
     
     if cid == "all":
-        companies = []
+        companies_list = []
         try:
             with engine().connect() as conn:
-                query = select(company_schemas.c.company_id)
+                query = select(companies.c.id)
                 rows = conn.execute(query).fetchall()
-                companies = [r[0] for r in rows]
+                companies_list = [r[0] for r in rows]
         except Exception as e:
-            logger.warning("Could not fetch company schemas: %s", e)
+            logger.warning("Could not fetch companies: %s", e)
         
-        logger.info("Found %d companies with custom schemas. Training all...", len(companies))
-        for comp_id in companies:
+        logger.info("Found %d companies in database. Training all...", len(companies_list))
+        for comp_id in companies_list:
             logger.info("--- Training for %s ---", comp_id)
             try:
                 train_for_company(comp_id)

@@ -31,6 +31,7 @@ from sqlalchemy import (
     select,
     update,
 )
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.engine import Engine
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -291,14 +292,26 @@ def upsert_workspace_member(
                 .values(**values)
             )
         else:
-            connection.execute(
-                workspace_members.insert().values(
-                    company_id=company_id,
-                    username=username,
-                    created_at=_now(),
-                    **values,
+            try:
+                with connection.begin_nested():
+                    connection.execute(
+                        workspace_members.insert().values(
+                            company_id=company_id,
+                            username=username,
+                            created_at=_now(),
+                            **values,
+                        )
+                    )
+            except IntegrityError:
+                # Member was inserted concurrently between our select and insert check
+                connection.execute(
+                    update(workspace_members)
+                    .where(
+                        workspace_members.c.company_id == company_id,
+                        workspace_members.c.username == username,
+                    )
+                    .values(**values)
                 )
-            )
 
 
 def workspace_overview(company_id: str) -> dict:

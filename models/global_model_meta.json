@@ -44,13 +44,13 @@
     "tenure_band_new"
   ],
   "metrics": {
-    "roc_auc": 0.7481,
-    "pr_auc": 0.4554,
-    "brier": 0.2049,
-    "f1": 0.4872,
-    "accuracy": 0.6813,
-    "precision": 0.3752,
-    "recall": 0.6944
+    "roc_auc": 0.842,
+    "pr_auc": 0.6263,
+    "brier": 0.1278,
+    "f1": 0.5573,
+    "accuracy": 0.8177,
+    "precision": 0.6584,
+    "recall": 0.4832
   },
   "num_features": [
     "tenure",
@@ -83,5 +83,5 @@
     "PaymentMethod",
     "tenure_band"
   ],
-  "model_family": "LogisticRegression"
+  "model_family": "XGBoost_Tuned"
 }

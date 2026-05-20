@@ -108,7 +108,13 @@
               <p>Fill in the customer profile in the sidebar, then click <strong>"Analyze churn risk"</strong> to generate a detailed risk assessment.</p>
               <button id="loadTestTrialBtn" type="button" class="primary" style="margin-top: 1.25rem; width: auto; background: linear-gradient(135deg, var(--cyan) 0%, #0891b2 100%); color: #111827; font-weight: 700; border: none; box-shadow: 0 4px 12px rgba(8, 145, 178, 0.25);">🚀 Try a Test Customer</button>
             </section>
-
+  
+            <!-- Results Actions -->
+            <div id="resultsActions" class="hidden" style="display: flex; gap: 0.75rem; justify-content: flex-end; margin-bottom: 0.85rem; width: 100%;">
+              <button id="resultsTryNewBtn" type="button" class="primary" style="width: auto; padding: 0.5rem 1.25rem; background: linear-gradient(135deg, var(--cyan) 0%, #0891b2 100%); color: #111827; font-weight: 700; border: none; box-shadow: 0 4px 12px rgba(8, 145, 178, 0.25); font-size: 0.85rem; cursor: pointer; display: flex; align-items: center; gap: 0.4rem; transition: transform 0.1s ease;">🔄 Try Another Customer</button>
+              <button id="resultsMinimizeBtn" type="button" style="width: auto; padding: 0.5rem 1.25rem; color: var(--ink); background: #ffffff; border: 1px solid var(--line); font-weight: 700; border-radius: 7px; font-size: 0.85rem; cursor: pointer; transition: background-color 0.15s ease;">Minimize Results</button>
+            </div>
+  
             <section id="results" class="results hidden">
             <article class="result-card probability-card">
               <p class="eyebrow">Churn probability</p>
@@ -243,9 +249,9 @@
                 <article class="result-card">
                   <p class="eyebrow">Quick Actions</p>
                   <h3>Management tools</h3>
-                  <div style="display:flex;flex-direction:column;gap:.75rem;margin-top:1rem;">
-                    <button id="adminRetrainAll" type="button" class="primary" style="width:auto">🔄 Retrain all models</button>
-                    <button id="adminRefreshTenants" type="button" style="width:auto;background:#fff;border:1px solid var(--line);color:var(--ink)">🔃 Refresh tenant list</button>
+                  <div class="admin-actions">
+                    <button id="adminRetrainAll" type="button" class="primary">🔄 Retrain all models</button>
+                    <button id="adminRefreshTenants" type="button" class="secondary">🔃 Refresh tenant list</button>
                     <p id="adminActionMessage" class="message" style="margin-top:.5rem;"></p>
                   </div>
                 </article>
@@ -254,15 +260,15 @@
                   <p class="eyebrow">Onboard Company</p>
                   <h3>Provision a new workspace</h3>
                   <p class="panel-copy">Create a new company and its initial admin user.</p>
-                  <form id="onboardForm" class="auth-form" style="margin-top: 1rem;">
-                    <div style="display:flex;gap:1rem;flex-wrap:wrap;">
-                      <label style="flex:1;min-width:150px">Company ID<input name="company_id" placeholder="acme-corp" required /></label>
-                      <label style="flex:1;min-width:150px">Company Name<input name="company_name" placeholder="Acme Corporation" required /></label>
-                      <label style="flex:1;min-width:150px">Owner Username<input name="owner_username" placeholder="admin.acme" required /></label>
-                      <label style="flex:1;min-width:150px">Owner Email<input name="owner_email" type="email" placeholder="admin@acme.com" required /></label>
-                      <label style="flex:1;min-width:150px">Owner Password<input name="owner_password" type="password" minlength="8" required /></label>
+                  <form id="onboardForm" class="auth-form">
+                    <div class="onboard-form-grid">
+                      <label>Company ID<input name="company_id" placeholder="acme-corp" required /></label>
+                      <label>Company Name<input name="company_name" placeholder="Acme Corporation" required /></label>
+                      <label>Owner Username<input name="owner_username" placeholder="admin.acme" required /></label>
+                      <label>Owner Email<input name="owner_email" type="email" placeholder="admin@acme.com" required /></label>
+                      <label>Owner Password<input name="owner_password" type="password" minlength="8" required /></label>
                     </div>
-                    <button type="submit" class="primary" style="margin-top: 1rem; width: auto;">Provision Workspace</button>
+                    <button type="submit" class="primary">Provision Workspace</button>
                     <p id="onboardMessage" class="message" style="margin-top: 1rem;"></p>
                   </form>
                 </article>

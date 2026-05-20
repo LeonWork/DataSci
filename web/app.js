@@ -17,6 +17,7 @@ const backToDashboard = document.querySelector("#backToDashboard");
 const profileForm = document.querySelector("#profileForm");
 const emptyState = document.querySelector("#emptyState");
 const results = document.querySelector("#results");
+const resultsActions = document.querySelector("#resultsActions");
 const probabilityValue = document.querySelector("#probabilityValue");
 const riskBadge = document.querySelector("#riskBadge");
 const probabilityMarker = document.querySelector("#probabilityMarker");
@@ -391,6 +392,7 @@ function renderPrediction(customer, prediction) {
     .join("");
 
   emptyState.classList.add("hidden");
+  resultsActions.classList.remove("hidden");
   results.classList.remove("hidden");
   featureDetail.classList.add("hidden");
 }
@@ -501,7 +503,7 @@ function renderBatchResults(data) {
         ${topRows.map((row) => `
           <tr>
             <td>${row.customerID}</td>
-            <td>${row.risk_level}</td>
+            <td><span class="risk-badge risk-${row.risk_level.toLowerCase()}">${row.risk_level}</span></td>
             <td>${Math.round(row.churn_probability * 1000) / 10}%</td>
             <td>${row.top_driver.replaceAll("_", " ")}</td>
             <td>${row.contract || ""}</td>
@@ -647,11 +649,11 @@ async function loadTenants() {
       <th>Learning Rows</th><th>Predictions</th><th>Created</th><th>Actions</th>
     </tr></thead><tbody>`;
     for (const t of tenants) {
-      const schemaStatus = t.has_schema ? '✅' : '⚠️ None';
-      const modelStatus = t.has_model ? '✅ Trained' : '❌ Not trained';
+      const schemaStatus = t.has_schema ? '<span class="badge badge--success">Active</span>' : '<span class="badge badge--warn">None</span>';
+      const modelStatus = t.has_model ? '<span class="badge badge--success">Trained</span>' : '<span class="badge badge--error">Not trained</span>';
       const created = t.created_at ? new Date(t.created_at).toLocaleDateString() : '—';
       html += `<tr>
-        <td><strong>${t.company_name || t.company_id}</strong><br><small style="color:var(--gray-400)">${t.company_id}</small></td>
+        <td><strong>${t.company_name || t.company_id}</strong><br><small>${t.company_id}</small></td>
         <td>${t.user_count}</td>
         <td>${schemaStatus}</td>
         <td>${modelStatus}</td>
@@ -659,8 +661,8 @@ async function loadTenants() {
         <td>${t.predictions.toLocaleString()}</td>
         <td>${created}</td>
         <td>
-          <button class="impersonate-btn" data-id="${t.company_id}" style="padding:0.35rem 0.65rem;font-size:0.75rem;background:linear-gradient(135deg, var(--cyan) 0%, #0891b2 100%);border:none;color:#111827;border-radius:6px;cursor:pointer;font-weight:700;box-shadow:0 2px 6px rgba(8,145,178,0.15);">🔬 View in Lab</button>
-          ${t.company_id !== 'default' ? `<button class="delete-tenant-btn" data-id="${t.company_id}" style="padding:0.35rem 0.65rem;font-size:0.75rem;background:#fee2e2;border:1px solid #fca5a5;color:#dc2626;border-radius:6px;margin-left:0.35rem;cursor:pointer;font-weight:700;">🗑️ Delete</button>` : ''}
+          <button class="impersonate-btn" data-id="${t.company_id}">🔬 View in Lab</button>
+          ${t.company_id !== 'default' ? `<button class="delete-tenant-btn" data-id="${t.company_id}">🗑️ Delete</button>` : ''}
         </td>
       </tr>`;
     }
@@ -1010,22 +1012,45 @@ document.getElementById("adminRetrainAll")?.addEventListener("click", async () =
 });
 
 document.body.addEventListener("click", (e) => {
-  const btn = e.target.closest("#loadTestTrialBtn");
-  if (!btn) return;
+  // Handle minimizing results
+  const minimizeBtn = e.target.closest("#resultsMinimizeBtn");
+  if (minimizeBtn) {
+    resultsActions.classList.add("hidden");
+    results.classList.add("hidden");
+    featureDetail.classList.add("hidden");
+    emptyState.classList.remove("hidden");
+    return;
+  }
+
+  // Handle generating/testing a new customer
+  const tryNewBtn = e.target.closest("#loadTestTrialBtn") || e.target.closest("#resultsTryNewBtn");
+  if (!tryNewBtn) return;
+  
   const container = document.getElementById("dynamicFormFields");
   if (!container) return;
   const inputs = container.querySelectorAll("input, select");
   inputs.forEach(input => {
     if (input.tagName.toLowerCase() === "select") {
       if (input.options.length > 0) {
-        input.selectedIndex = 0;
+        // Pick a random option index
+        const randIdx = Math.floor(Math.random() * input.options.length);
+        input.selectedIndex = randIdx;
       }
     } else if (input.type === "number") {
       const name = input.name.toLowerCase();
-      if (name.includes("tenure")) input.value = 12;
-      else if (name.includes("charge")) input.value = 65;
-      else if (name.includes("total")) input.value = 780;
-      else input.value = 15;
+      if (name.includes("tenure")) {
+        input.value = Math.floor(Math.random() * 71) + 1; // 1 to 72 months
+      } else if (name.includes("charge") || name.includes("spent")) {
+        input.value = Math.floor(Math.random() * 101) + 20; // 20 to 120
+      } else if (name.includes("total")) {
+        const tenureInput = Array.from(inputs).find(i => i.name.toLowerCase().includes("tenure"));
+        const chargeInput = Array.from(inputs).find(i => i.name.toLowerCase().includes("charge"));
+        const tVal = tenureInput ? Number(tenureInput.value) : 12;
+        const cVal = chargeInput ? Number(chargeInput.value) : 65;
+        input.value = (tVal * cVal).toFixed(2);
+      } else {
+        input.value = Math.floor(Math.random() * 10) + 1;
+      }
     } else {
       input.value = "1";
     }

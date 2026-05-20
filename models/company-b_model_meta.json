@@ -1,5 +1,5 @@
 {
-  "company_id": "acme_ecommerce",
+  "company_id": "company-b",
   "feature_names": [
     "days_since_last_purchase",
     "total_spent",
@@ -18,13 +18,13 @@
     "device_type_Tablet"
   ],
   "metrics": {
-    "roc_auc": 0.8343,
-    "pr_auc": 0.728,
-    "brier": 0.1558,
-    "f1": 0.688,
-    "accuracy": 0.785,
-    "precision": 0.7292,
-    "recall": 0.6511
+    "roc_auc": 0.8265,
+    "pr_auc": 0.6902,
+    "brier": 0.1625,
+    "f1": 0.6416,
+    "accuracy": 0.7617,
+    "precision": 0.6919,
+    "recall": 0.5981
   },
   "num_features": [
     "days_since_last_purchase",

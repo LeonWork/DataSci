@@ -84,7 +84,7 @@ button {
   color: var(--cyan);
   font-size: 0.76rem;
   font-weight: 800;
-  letter-spacing: 0;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
 }
 
@@ -197,63 +197,167 @@ select {
   color: #e5e7eb;
   background: var(--sidebar);
   height: 100vh;
-  padding: 1.2rem 3.25rem 1.2rem 1.2rem;
-  overflow: auto;
+  padding: 1.5rem 3.25rem 1.5rem 1.5rem;
+  overflow-y: auto;
   position: sticky;
   top: 0;
+  border-right: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 4px 0 24px rgba(0, 0, 0, 0.25);
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.1) transparent;
+}
+
+/* Custom Scrollbar for Sidebar */
+.sidebar::-webkit-scrollbar {
+  width: 6px;
+}
+.sidebar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.sidebar::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+}
+.sidebar::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.24);
 }
 
 .sidebar .eyebrow {
-  color: #67e8f9;
+  color: var(--cyan);
+  letter-spacing: 0.05em;
 }
 
 .sidebar-header h2 {
   margin: 0;
   max-width: 250px;
   color: #ffffff;
-  font-size: 1.4rem;
+  font-size: 1.45rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
 }
 
 .sidebar-header p:last-child {
   max-width: 250px;
   color: #9ca3af;
-  margin-top: 0.35rem;
+  margin-top: 0.45rem;
+  font-size: 0.88rem;
+  line-height: 1.4;
 }
 
 .preset-row {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 0.5rem;
-  margin: 1rem 0;
+  margin: 1.25rem 0;
 }
 
 .preset-row button {
   color: #f9fafb;
-  background: #1f2937;
+  background: rgba(255, 255, 255, 0.06);
   border: 1px solid rgba(255, 255, 255, 0.1);
-  padding: 0.68rem;
+  padding: 0.62rem;
+  font-size: 0.84rem;
+  border-radius: 6px;
+  transition: background 0.2s, border-color 0.2s, transform 0.1s;
 }
 
-fieldset {
+.preset-row button:hover {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.preset-row button:active {
+  transform: translateY(1px);
+}
+
+.sidebar fieldset {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.72rem;
-  margin: 0;
-  padding: 0.85rem 0 0;
+  gap: 0.85rem;
+  margin: 0 0 1.25rem;
+  padding: 1.25rem 0 0;
   border: 0;
-  border-top: 1px solid rgba(255, 255, 255, 0.12);
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
 }
 
-legend {
+.sidebar legend {
   grid-column: 1 / -1;
-  color: #f9fafb;
-  font-size: 0.8rem;
+  color: #9ca3af;
+  font-size: 0.72rem;
   font-weight: 800;
   text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 0.25rem;
+  padding: 0;
 }
 
 .sidebar label {
   color: #d1d5db;
+  font-size: 0.82rem;
+  font-weight: 600;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.sidebar input,
+.sidebar select {
+  width: 100%;
+  min-height: 38px;
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  padding: 0.5rem 0.7rem;
+  font-size: 0.88rem;
+  font-weight: 500;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease;
+}
+
+.sidebar select {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%239ca3af'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.6rem center;
+  background-size: 1rem;
+  padding-right: 1.8rem;
+  appearance: none;
+}
+
+.sidebar input:hover,
+.sidebar select:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.sidebar input:focus,
+.sidebar select:focus {
+  outline: none;
+  background: rgba(255, 255, 255, 0.06);
+  border-color: var(--cyan);
+  box-shadow: 0 0 0 3px rgba(8, 145, 178, 0.25);
+}
+
+.sidebar .primary {
+  background: linear-gradient(135deg, var(--cyan) 0%, #0891b2 100%);
+  color: #111827;
+  font-weight: 800;
+  font-size: 0.92rem;
+  letter-spacing: 0.02em;
+  border: none;
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(8, 145, 178, 0.25);
+  margin-top: 0.5rem;
+  transition: transform 0.2s ease, box-shadow 0.2s ease, filter 0.2s ease;
+}
+
+.sidebar .primary:hover {
+  transform: translateY(-1px);
+  filter: brightness(1.08);
+  box-shadow: 0 6px 16px rgba(8, 145, 178, 0.35);
+}
+
+.sidebar .primary:active {
+  transform: translateY(1px);
 }
 
 .workspace {
@@ -453,7 +557,16 @@ legend {
 }
 
 .result-card {
-  padding: 0.9rem;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: 0 4px 12px rgba(16, 24, 40, 0.04);
+  padding: 1.25rem;
+  transition: box-shadow 0.2s ease, border-color 0.2s ease;
+}
+
+.result-card:hover {
+  box-shadow: 0 8px 22px rgba(16, 24, 40, 0.07);
 }
 
 .action-row {
@@ -1290,32 +1403,49 @@ th {
 /* ── Admin KPI grid ──────────────────────────────────────────────── */
 .kpi-grid {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 0.75rem;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.85rem;
+}
+
+@media (max-width: 900px) {
+  .kpi-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
 }
 
 .kpi {
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 1rem;
-  background: #f8fafc;
+  justify-content: center;
+  text-align: center;
+  padding: 1.2rem 1rem;
+  background: var(--panel);
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 10px;
+  box-shadow: 0 2px 8px rgba(16, 24, 40, 0.03);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.kpi:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(16, 24, 40, 0.06);
 }
 
 .kpi-value {
-  font-size: 1.8rem;
+  font-size: 2rem;
   font-weight: 800;
   color: var(--ink);
+  line-height: 1.2;
 }
 
 .kpi-label {
-  font-size: 0.78rem;
+  font-size: 0.74rem;
   font-weight: 700;
   color: var(--muted);
   text-transform: uppercase;
-  margin-top: 0.25rem;
+  letter-spacing: 0.05em;
+  margin-top: 0.35rem;
 }
 
 /* ── Admin tenant table ──────────────────────────────────────────── */
@@ -1327,18 +1457,21 @@ th {
 
 #tenantTable th {
   text-align: left;
-  padding: 0.6rem 0.75rem;
+  padding: 0.75rem 1rem;
   color: var(--muted);
-  font-size: 0.76rem;
+  font-size: 0.72rem;
   font-weight: 800;
   text-transform: uppercase;
+  letter-spacing: 0.05em;
   border-bottom: 2px solid var(--line);
+  background: #f8fafc;
 }
 
 #tenantTable td {
-  padding: 0.7rem 0.75rem;
+  padding: 0.85rem 1rem;
   border-bottom: 1px solid var(--line);
   vertical-align: middle;
+  color: var(--ink);
 }
 
 #tenantTable tr:last-child td {
@@ -1347,4 +1480,184 @@ th {
 
 #tenantTable tr:hover td {
   background: #f8fafc;
+}
+
+/* ── Reusable Status Badges ──────────────────────────────────────── */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.25rem 0.6rem;
+  border-radius: 999px;
+  font-size: 0.74rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  line-height: 1;
+  border: 1px solid transparent;
+}
+
+.badge--success {
+  background: #ecfdf5;
+  color: var(--green);
+  border-color: #a7f3d0;
+}
+
+.badge--warn {
+  background: #fffbeb;
+  color: var(--amber);
+  border-color: #fde68a;
+}
+
+.badge--error {
+  background: #fef2f2;
+  color: var(--red);
+  border-color: #fecaca;
+}
+
+/* ── Admin tenant actions ────────────────────────────────────────── */
+.impersonate-btn {
+  padding: 0.45rem 0.85rem;
+  font-size: 0.78rem;
+  background: linear-gradient(135deg, var(--cyan) 0%, #0891b2 100%);
+  border: none;
+  color: #111827;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 800;
+  box-shadow: 0 2px 6px rgba(8, 145, 178, 0.15);
+  transition: transform 0.15s ease, box-shadow 0.15s ease, filter 0.15s ease;
+}
+
+.impersonate-btn:hover {
+  transform: translateY(-1px);
+  filter: brightness(1.05);
+  box-shadow: 0 4px 10px rgba(8, 145, 178, 0.25);
+}
+
+.impersonate-btn:active {
+  transform: translateY(1px);
+}
+
+.delete-tenant-btn {
+  padding: 0.45rem 0.85rem;
+  font-size: 0.78rem;
+  background: #fee2e2;
+  border: 1px solid #fca5a5;
+  color: #dc2626;
+  border-radius: 6px;
+  margin-left: 0.4rem;
+  cursor: pointer;
+  font-weight: 800;
+  transition: transform 0.15s ease, background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.delete-tenant-btn:hover {
+  transform: translateY(-1px);
+  background: #fecaca;
+  border-color: #f87171;
+}
+
+.delete-tenant-btn:active {
+  transform: translateY(1px);
+}
+
+/* ── Onboarding Form Grid ────────────────────────────────────────── */
+.onboard-form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+.onboard-form-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  color: #344054;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.onboard-form-grid input {
+  min-height: 40px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  padding: 0.55rem 0.75rem;
+  font-size: 0.9rem;
+  color: var(--ink);
+  background: #ffffff;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.onboard-form-grid input:focus {
+  outline: none;
+  border-color: var(--cyan);
+  box-shadow: 0 0 0 3px rgba(8, 145, 178, 0.15);
+}
+
+/* ── Admin Quick Actions ─────────────────────────────────────────── */
+.admin-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-top: 1rem;
+}
+
+.admin-actions button {
+  padding: 0.68rem 1rem;
+  font-size: 0.88rem;
+  border-radius: 6px;
+  width: 100%;
+  cursor: pointer;
+  font-weight: 800;
+  transition: transform 0.15s ease, background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.admin-actions .primary {
+  background: var(--blue);
+  color: #ffffff;
+  border: none;
+  box-shadow: 0 2px 6px rgba(37, 99, 235, 0.15);
+}
+
+.admin-actions .primary:hover {
+  transform: translateY(-1px);
+  background: #1d4ed8;
+  box-shadow: 0 4px 10px rgba(37, 99, 235, 0.25);
+}
+
+.admin-actions .primary:active {
+  transform: translateY(1px);
+}
+
+.admin-actions .secondary {
+  background: #ffffff;
+  border: 1px solid var(--line);
+  color: var(--ink);
+}
+
+.admin-actions .secondary:hover {
+  transform: translateY(-1px);
+  background: #f8fafc;
+  border-color: #cbd5e1;
+}
+
+.admin-actions .secondary:active {
+  transform: translateY(1px);
+}
+
+/* Onboard Form Submit Button */
+#onboardForm button[type="submit"] {
+  width: auto;
+  min-width: 200px;
+  margin-top: 1rem;
+}
+
+#tenantTable td small {
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 500;
+  display: inline-block;
+  margin-top: 0.15rem;
 }

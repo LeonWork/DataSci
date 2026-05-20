@@ -65,11 +65,11 @@ def main() -> None:
     # Churn probability — depends on contract, tenure, internet
     churn_logit = (
         -1.5
-        + (contract == "Month-to-month") * 1.4
-        + (contract == "One year") * 0.3
-        - tenure * 0.035
-        + (internet == "Fiber optic") * 0.6
-        + RNG.normal(0, 0.5, N)
+        + (contract == "Month-to-month") * 2.2
+        + (contract == "One year") * 0.5
+        - tenure * 0.06
+        + (internet == "Fiber optic") * 1.2
+        + RNG.normal(0, 0.02, N)
     )
     churn_prob = 1 / (1 + np.exp(-churn_logit))
     churn = np.where(RNG.random(N) < churn_prob, "Yes", "No")
