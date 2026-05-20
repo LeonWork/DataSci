@@ -69,12 +69,11 @@ Typical risk drivers in this dataset include short tenure, month-to-month contra
 - The global model is trained on public/compatible telecom-style data and is not yet calibrated to a specific real company.
 - Prediction quality may drift if pricing, products, contracts, or customer behavior change.
 - Demographic fields such as gender and senior-citizen status require fairness review before production use.
-- Uploaded company feedback is queued for retraining, and the app records training status, but it still needs approval and production/candidate promotion controls before automated production retraining.
+- Uploaded company feedback is queued for review, can be approved for training, and the app records training status. It still needs production/candidate promotion controls before automated production retraining.
 
 ## Roadmap
 
-1. Add a schema editor for correcting inferred tenant schemas before retraining.
-2. Expand the model registry so production and candidate models are separated.
-3. Add reviewed learning-row states: `queued`, `approved_for_training`, and `used_in_model`.
-4. Add drift monitoring and a `retrain_recommended` signal.
-5. Add company-level calibration after enough labeled outcomes are collected.
+1. Expand the model registry so production and candidate models are separated.
+2. Add `used_in_model` tracking after retraining consumes approved rows.
+3. Add drift monitoring and a `retrain_recommended` signal.
+4. Add company-level calibration after enough labeled outcomes are collected.

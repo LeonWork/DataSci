@@ -229,10 +229,11 @@ batch scoring, and learning queue routes require that signed session token.
 
 Unlabeled company CSVs can be scored immediately through the Batch CSV analysis panel.
 To improve the model, upload labeled CSVs that include a known `Churn` column through
-the Learning Queue panel. Those rows are stored in `data/company_feedback.csv`, which is
-ignored by Git. The next run of `python scripts/train_and_save.py` automatically includes
-that labeled feedback in training. The API validates `Churn` labels before saving rows and
-exposes the current queue at:
+the Learning Queue panel. Those rows are stored as `queued` learning rows and can be
+approved or rejected in the Improvement Lab before retraining. The next run of
+`python scripts/train_and_save.py` uses `approved_for_training` rows first, with a
+legacy fallback to queued rows for older demo data. The API validates `Churn` labels
+before saving rows and exposes the current queue at:
 
 ```text
 GET /learning/status
@@ -291,6 +292,8 @@ This release is designed to look and behave like a real internal company tool:
 - Tenant-scoped prediction, upload, learning, and admin-summary records
 - Tenant-specific schemas and model artifacts routed by `company_id`
 - Dynamic JSON and CSV prediction for non-Telco customer schemas
+- Owner-editable schema review in the Improvement Lab
+- Learning-row review states for queued, approved, and rejected training rows
 - Workspace member tracking for owner/analyst/viewer readiness
 - CSV validation reports with row-level errors for scoring and learning uploads
 - Model comparison metadata, threshold reports, and retraining status history
@@ -306,7 +309,7 @@ Recommended order:
 1. Use Neon for production prediction/upload history; keep local tests isolated on SQLite.
 2. Onboard a demo tenant through the admin panel and upload a seed CSV to define its schema.
 3. Upload labeled rows, trigger retraining, and verify `/admin/retrain/status`.
-4. Add a schema editor for correcting inferred numerical/categorical columns.
+4. Add candidate-vs-production model promotion before replacing active models.
 5. Add model drift and post-outcome performance monitoring.
 6. Add deployment smoke tests for protected APIs, database connection, and dashboard loading.
 7. Add a resume-ready walkthrough with screenshots and the model comparison story.

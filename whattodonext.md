@@ -11,12 +11,14 @@
 9. **Interactive Testing UI**: Added an action panel to the frontend allowing users to dynamically randomize customer attributes for testing and minimize/collapse analysis results to return the dashboard to a clean empty state.
 10. **Dynamic Prediction API**: Updated `/predict` and `/predict-batch` so tenant workspaces can score schema-specific JSON instead of being locked to the Telco fields.
 11. **Retraining Observability**: Added per-company training status records for `running`, `succeeded`, and `failed` model jobs.
-12. **100% Test Suite Pass Rate**: All 143 API, pipeline, and integration tests pass locally with SQLite and no Neon/network dependency.
+12. **Schema Review UI**: Added an owner-editable schema editor so inferred columns can be corrected before retraining.
+13. **Learning Row Review**: Added queued, approved, and rejected learning-row states with review controls in the Improvement Lab.
+14. **100% Test Suite Pass Rate**: All 146 API, pipeline, and integration tests pass locally with SQLite and no Neon/network dependency.
 
 # What To Do Next
 
-1. **Schema Editor UI**: Let owners correct inferred numerical/categorical columns before retraining.
-2. **Model Promotion Workflow**: Separate production and candidate artifacts so retraining can be reviewed before promotion.
+1. **Model Promotion Workflow**: Separate production and candidate artifacts so retraining can be reviewed before promotion.
+2. **Used-In-Model Tracking**: Mark approved rows as consumed after successful retraining.
 3. **Drift Monitoring**: Add feature drift, prediction distribution drift, label balance, and retrain-recommended indicators.
 4. **Advanced Model Explanations**: Integrate richer SHAP/LIME-style plots directly in the dashboard.
 5. **Tenant Usage Analytics**: Implement billing, usage limits, and API quota tracking for the multi-tenant SaaS subscription model.

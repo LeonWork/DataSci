@@ -462,6 +462,72 @@ def record_learning_rows(
         connection.execute(learning_rows.insert(), payload)
 
 
+def list_learning_rows(
+    *,
+    company_id: str = DEFAULT_COMPANY_ID,
+    status: str | None = "queued",
+    limit: int = 50,
+) -> list[dict]:
+    init_storage()
+    query = (
+        select(learning_rows)
+        .where(learning_rows.c.company_id == company_id)
+        .order_by(learning_rows.c.created_at.desc())
+        .limit(limit)
+    )
+    if status:
+        query = query.where(learning_rows.c.status == status)
+
+    with _connect() as connection:
+        rows = connection.execute(query).mappings().all()
+
+    payload = []
+    for row in rows:
+        data = dict(row)
+        if isinstance(data.get("created_at"), datetime):
+            data["created_at"] = data["created_at"].isoformat()
+        try:
+            row_json = json.loads(data.pop("row_json") or "{}")
+        except json.JSONDecodeError:
+            row_json = {}
+        data["row"] = row_json
+        payload.append(data)
+    return payload
+
+
+def learning_status_counts(company_id: str = DEFAULT_COMPANY_ID) -> dict[str, int]:
+    init_storage()
+    with _connect() as connection:
+        rows = connection.execute(
+            select(learning_rows.c.status, func.count(learning_rows.c.id))
+            .where(learning_rows.c.company_id == company_id)
+            .group_by(learning_rows.c.status)
+        ).all()
+    return {str(status): int(count) for status, count in rows}
+
+
+def update_learning_row_statuses(
+    *,
+    company_id: str,
+    row_ids: Iterable[int],
+    status: str,
+) -> int:
+    init_storage()
+    ids = [int(row_id) for row_id in row_ids]
+    if not ids:
+        return 0
+    with _connect() as connection:
+        result = connection.execute(
+            update(learning_rows)
+            .where(
+                learning_rows.c.company_id == company_id,
+                learning_rows.c.id.in_(ids),
+            )
+            .values(status=status)
+        )
+        return int(result.rowcount or 0)
+
+
 def record_audit_event(
     *,
     username: str,

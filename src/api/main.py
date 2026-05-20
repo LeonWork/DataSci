@@ -66,6 +66,9 @@ from src.api.storage import (
     admin_summary as build_admin_summary,
     init_storage,
     record_learning_rows,
+    list_learning_rows,
+    learning_status_counts,
+    update_learning_row_statuses,
     record_prediction_event,
     record_upload_batch,
     storage_backend as product_storage_backend,
@@ -304,6 +307,44 @@ def _schema_columns(schema: dict) -> tuple[list[str], dict]:
     if isinstance(categorical, list):
         categorical = {column: [] for column in categorical}
     return numerical, categorical
+
+
+def _normalize_schema_payload(schema: dict) -> dict:
+    numerical = schema.get("numerical", [])
+    categorical = schema.get("categorical", {})
+    if not isinstance(numerical, list):
+        raise HTTPException(status_code=400, detail="`numerical` must be a list of column names.")
+    if isinstance(categorical, list):
+        categorical = {column: [] for column in categorical}
+    if not isinstance(categorical, dict):
+        raise HTTPException(status_code=400, detail="`categorical` must be an object or list.")
+
+    clean_numerical = []
+    for column in numerical:
+        value = str(column).strip()
+        if value and value not in clean_numerical and value not in SCHEMA_METADATA_COLS:
+            clean_numerical.append(value)
+
+    clean_categorical = {}
+    for column, options in categorical.items():
+        key = str(column).strip()
+        if not key or key in SCHEMA_METADATA_COLS or key in clean_numerical:
+            continue
+        if options is None:
+            values = []
+        elif isinstance(options, list):
+            values = []
+            for option in options:
+                text = str(option).strip()
+                if text and text not in values:
+                    values.append(text)
+        else:
+            raise HTTPException(status_code=400, detail=f"`categorical.{key}` must be a list.")
+        clean_categorical[key] = values[:50]
+
+    if not clean_numerical and not clean_categorical:
+        raise HTTPException(status_code=400, detail="Schema needs at least one feature column.")
+    return {"numerical": clean_numerical, "categorical": clean_categorical}
 
 
 def _validate_customer_csv(df: pd.DataFrame, *, company_id: str, require_churn: bool, max_rows: int) -> tuple[pd.DataFrame, dict]:
@@ -545,6 +586,25 @@ def get_schema(session: AuthenticatedUser = Depends(_require_session)) -> dict:
         # Fallback to empty schema
         return {"numerical": [], "categorical": []}
     return schema
+
+
+@app.put("/admin/schema", tags=["Admin"])
+def update_schema(
+    schema: dict = Body(...),
+    session: AuthenticatedUser = Depends(_require_session),
+) -> dict:
+    """Update the active company's schema after admin review."""
+    if session.role != "owner":
+        raise HTTPException(status_code=403, detail="Only workspace owners can edit schemas.")
+    normalized = _normalize_schema_payload(schema)
+    save_company_schema(session.company_id, normalized)
+    record_audit_event(
+        username=session.username,
+        event_type="schema_update",
+        details=f"Schema updated with {len(normalized['numerical'])} numeric and {len(normalized['categorical'])} categorical columns",
+        company_id=session.company_id,
+    )
+    return {"ok": True, "schema": normalized}
 
 
 @app.get("/admin/workspace", response_model=WorkspaceResponse, tags=["Admin"])
@@ -1041,6 +1101,47 @@ def learning_status(_: AuthenticatedUser = Depends(_require_session)) -> Learnin
             else None
         ),
     )
+
+
+@app.get("/learning/review", tags=["Learning"])
+def learning_review(session: AuthenticatedUser = Depends(_require_session)) -> dict:
+    """Return queued learning rows for owner review before retraining."""
+    counts = learning_status_counts(session.company_id)
+    rows = list_learning_rows(company_id=session.company_id, status="queued", limit=100)
+    return {"counts": counts, "rows": rows}
+
+
+@app.post("/learning/review", tags=["Learning"])
+def review_learning_rows(
+    request: dict = Body(...),
+    session: AuthenticatedUser = Depends(_require_session),
+) -> dict:
+    """Approve or reject queued learning rows."""
+    if session.role != "owner":
+        raise HTTPException(status_code=403, detail="Only workspace owners can review learning rows.")
+    status_value = str(request.get("status", "")).strip()
+    allowed = {"approved_for_training", "rejected"}
+    if status_value not in allowed:
+        raise HTTPException(status_code=400, detail=f"Status must be one of {sorted(allowed)}.")
+    row_ids = request.get("row_ids", [])
+    if not isinstance(row_ids, list):
+        raise HTTPException(status_code=400, detail="`row_ids` must be a list.")
+    updated = update_learning_row_statuses(
+        company_id=session.company_id,
+        row_ids=row_ids,
+        status=status_value,
+    )
+    record_audit_event(
+        username=session.username,
+        event_type="learning_review",
+        details=f"{status_value}: {updated} learning rows",
+        company_id=session.company_id,
+    )
+    return {
+        "ok": True,
+        "updated_rows": updated,
+        "counts": learning_status_counts(session.company_id),
+    }
 
 
 if WEB_DIR.exists():

@@ -447,6 +447,33 @@ class TestAdminSummary:
         assert run["model_family"] == "XGBoost_Tuned"
         assert run["metrics"]["roc_auc"] == 0.86
 
+    def test_owner_can_update_schema(self, client):
+        resp = client.put("/admin/schema", json={
+            "numerical": ["days_since_last_purchase", "total_spent"],
+            "categorical": {
+                "plan": ["Free", "Pro"],
+                "region": ["West", "East"],
+            },
+        })
+
+        assert resp.status_code == 200
+        schema = resp.json()["schema"]
+        assert schema["numerical"] == ["days_since_last_purchase", "total_spent"]
+        assert schema["categorical"]["plan"] == ["Free", "Pro"]
+
+    def test_non_owner_cannot_update_schema(self, client):
+        token = create_session_token_for_user({
+            "username": "viewer",
+            "email": "viewer@example.com",
+            "company_id": "default",
+            "role": "viewer",
+        })
+        client.headers.update({"Authorization": f"Bearer {token}"})
+
+        resp = client.put("/admin/schema", json={"numerical": ["x"], "categorical": {}})
+
+        assert resp.status_code == 403
+
     def test_failed_retraining_status_preserves_error(self, client):
         from src.api.storage import start_training_run, finish_training_run
 
@@ -487,6 +514,35 @@ class TestLearningQueue:
         summary = client.get("/admin/summary").json()
         assert summary["learning_rows_queued"] == 1
         assert summary["csv_upload_batches"] == 1
+
+    def test_learning_review_approves_and_rejects_rows(self, client, tmp_path, monkeypatch):
+        monkeypatch.setattr("src.api.main.FEEDBACK_PATH", tmp_path / "feedback.csv")
+        for churn in ("Yes", "No"):
+            resp = client.post(
+                "/learning/upload",
+                files={"file": (f"learning-{churn}.csv", BytesIO(_learning_csv(churn)), "text/csv")},
+            )
+            assert resp.status_code == 200
+
+        review = client.get("/learning/review").json()
+        row_ids = [row["id"] for row in review["rows"]]
+        assert review["counts"]["queued"] == 2
+
+        approve = client.post(
+            "/learning/review",
+            json={"row_ids": [row_ids[0]], "status": "approved_for_training"},
+        )
+        reject = client.post(
+            "/learning/review",
+            json={"row_ids": [row_ids[1]], "status": "rejected"},
+        )
+
+        assert approve.status_code == 200
+        assert reject.status_code == 200
+        counts = client.get("/learning/review").json()["counts"]
+        assert counts["approved_for_training"] == 1
+        assert counts["rejected"] == 1
+        assert counts.get("queued", 0) == 0
 
     def test_upload_rejects_unknown_churn_label(self, client, tmp_path, monkeypatch):
         monkeypatch.setattr("src.api.main.FEEDBACK_PATH", tmp_path / "feedback.csv")

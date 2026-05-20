@@ -199,10 +199,17 @@ def load_training_data(company_id: str = "global") -> pd.DataFrame:
         
     try:
         with engine().connect() as conn:
-            query = select(learning_rows.c.row_json).where(learning_rows.c.status == "queued")
+            query = select(learning_rows.c.row_json).where(
+                learning_rows.c.status == "approved_for_training"
+            )
             if company_id != "global":
                 query = query.where(learning_rows.c.company_id == company_id)
             rows = conn.execute(query).fetchall()
+            if not rows:
+                legacy_query = select(learning_rows.c.row_json).where(learning_rows.c.status == "queued")
+                if company_id != "global":
+                    legacy_query = legacy_query.where(learning_rows.c.company_id == company_id)
+                rows = conn.execute(legacy_query).fetchall()
         if rows:
             db_records = []
             for r in rows:

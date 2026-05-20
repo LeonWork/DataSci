@@ -53,6 +53,12 @@ const exportHighRisk = document.querySelector("#exportHighRisk");
 const adminSection = document.querySelector("#adminSection");
 const onboardForm = document.querySelector("#onboardForm");
 const onboardMessage = document.querySelector("#onboardMessage");
+const schemaEditorForm = document.querySelector("#schemaEditorForm");
+const schemaNumerical = document.querySelector("#schemaNumerical");
+const schemaCategorical = document.querySelector("#schemaCategorical");
+const schemaEditorMessage = document.querySelector("#schemaEditorMessage");
+const learningReviewSummary = document.querySelector("#learningReviewSummary");
+const learningReviewTable = document.querySelector("#learningReviewTable");
 let lastCustomer = null;
 let lastPrediction = null;
 let lastBatchRows = [];
@@ -800,6 +806,7 @@ document.querySelector(".lab-tabs")?.addEventListener("click", (e) => {
 async function loadLabData() {
   loadLabSchema();
   loadLabMetrics();
+  loadLearningReview();
 }
 
 async function loadLabSchema() {
@@ -810,6 +817,8 @@ async function loadLabSchema() {
     const numCols = data.numerical || [];
     const catCols = data.categorical || {};
     const catKeys = typeof catCols === "object" && !Array.isArray(catCols) ? Object.keys(catCols) : (Array.isArray(catCols) ? catCols : []);
+    currentSchema = data;
+    populateSchemaEditor(data);
 
     if (numCols.length === 0 && catKeys.length === 0) {
       view.innerHTML = '<p style="color:var(--muted);font-size:14px;">No schema detected yet. Upload a seed CSV in the Train & Learn tab.</p>';
@@ -824,6 +833,126 @@ async function loadLabSchema() {
     view.innerHTML = html;
   } catch {
     view.innerHTML = '<p style="color:var(--red)">Failed to load schema.</p>';
+  }
+}
+
+function populateSchemaEditor(schema) {
+  if (!schemaNumerical || !schemaCategorical) return;
+  const numCols = schema.numerical || [];
+  const catCols = schema.categorical || {};
+  schemaNumerical.value = numCols.join("\n");
+  const catLines = Object.entries(catCols).map(([column, values]) => {
+    const suffix = Array.isArray(values) && values.length ? `: ${values.join(", ")}` : "";
+    return `${column}${suffix}`;
+  });
+  schemaCategorical.value = catLines.join("\n");
+}
+
+function schemaFromEditor() {
+  const numerical = (schemaNumerical?.value || "")
+    .split(/\n|,/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+  const categorical = {};
+  (schemaCategorical?.value || "").split("\n").forEach((line) => {
+    const trimmed = line.trim();
+    if (!trimmed) return;
+    const [column, ...rest] = trimmed.split(":");
+    const name = column.trim();
+    if (!name) return;
+    const values = rest.join(":").split(",").map((item) => item.trim()).filter(Boolean);
+    categorical[name] = values;
+  });
+  return { numerical, categorical };
+}
+
+async function saveSchemaEditor(event) {
+  event.preventDefault();
+  if (!schemaEditorMessage) return;
+  schemaEditorMessage.textContent = "Saving schema...";
+  schemaEditorMessage.style.color = "inherit";
+  try {
+    const data = await fetch("/admin/schema", {
+      method: "PUT",
+      headers: authHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify(schemaFromEditor()),
+    }).then(async (response) => {
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(formatApiError(body.detail, "Could not save schema."));
+      return body;
+    });
+    currentSchema = data.schema;
+    schemaEditorMessage.textContent = "Schema saved.";
+    schemaEditorMessage.style.color = "var(--green)";
+    await loadSchema();
+    await loadLabSchema();
+  } catch (error) {
+    schemaEditorMessage.textContent = error.message;
+    schemaEditorMessage.style.color = "var(--red)";
+  }
+}
+
+async function loadLearningReview() {
+  if (!learningReviewSummary || !learningReviewTable) return;
+  try {
+    const data = await fetch("/learning/review", { headers: authHeaders() }).then(async (response) => {
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(formatApiError(body.detail, "Could not load review queue."));
+      return body;
+    });
+    const counts = data.counts || {};
+    const rows = data.rows || [];
+    learningReviewSummary.textContent = `${counts.queued || 0} queued · ${counts.approved_for_training || 0} approved · ${counts.rejected || 0} rejected`;
+    if (!rows.length) {
+      learningReviewTable.innerHTML = '<p style="color:var(--muted);font-size:14px;">No queued learning rows need review.</p>';
+      return;
+    }
+    learningReviewTable.innerHTML = `
+      <table>
+        <thead><tr><th></th><th>Customer</th><th>Churn</th><th>Preview</th></tr></thead>
+        <tbody>
+          ${rows.map((item) => {
+            const row = item.row || {};
+            const preview = Object.entries(row)
+              .filter(([key]) => !["Churn", "source_file", "uploaded_at"].includes(key))
+              .slice(0, 3)
+              .map(([key, value]) => `${key}: ${value}`)
+              .join(" · ");
+            return `
+              <tr>
+                <td><input type="checkbox" data-learning-row-id="${item.id}" /></td>
+                <td>${item.customer_id}</td>
+                <td>${item.churn}</td>
+                <td>${preview}</td>
+              </tr>
+            `;
+          }).join("")}
+        </tbody>
+      </table>
+    `;
+  } catch (error) {
+    learningReviewSummary.textContent = error.message;
+    learningReviewSummary.style.color = "var(--red)";
+  }
+}
+
+async function reviewSelectedLearningRows(status) {
+  const ids = Array.from(document.querySelectorAll("[data-learning-row-id]:checked"))
+    .map((input) => Number(input.dataset.learningRowId));
+  if (!ids.length) {
+    if (learningReviewSummary) learningReviewSummary.textContent = "Select at least one row first.";
+    return;
+  }
+  try {
+    await postJson("/learning/review", { row_ids: ids, status });
+    await loadLearningReview();
+    await loadAdminSummary();
+    await loadLabMetrics();
+  } catch (error) {
+    if (learningReviewSummary) {
+      learningReviewSummary.textContent = error.message;
+      learningReviewSummary.style.color = "var(--red)";
+    }
   }
 }
 
@@ -870,6 +999,7 @@ document.getElementById("labLearningCsv")?.addEventListener("change", async (e) 
     const data = await postFile("/learning/upload", file);
     if (status) status.textContent = `✅ ${data.accepted_rows} rows accepted. ${data.stored_rows} total queued.`;
     loadLabMetrics();
+    loadLearningReview();
   } catch (error) {
     if (status) status.textContent = `❌ ${error.message}`;
   }
@@ -889,6 +1019,7 @@ document.getElementById("labSeedCsv")?.addEventListener("change", async (e) => {
     }
     loadSchema();
     loadLabSchema();
+    loadLearningReview();
   } catch (error) {
     if (status) status.textContent = `❌ ${error.message}`;
   }
@@ -1030,6 +1161,14 @@ document.getElementById("adminRetrainAll")?.addEventListener("click", async () =
       msg.style.color = "var(--red)";
     }
   }
+});
+
+schemaEditorForm?.addEventListener("submit", saveSchemaEditor);
+document.getElementById("approveLearningRows")?.addEventListener("click", () => {
+  reviewSelectedLearningRows("approved_for_training");
+});
+document.getElementById("rejectLearningRows")?.addEventListener("click", () => {
+  reviewSelectedLearningRows("rejected");
 });
 
 document.body.addEventListener("click", (e) => {

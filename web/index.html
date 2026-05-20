@@ -399,6 +399,28 @@
                   </div>
                   <div id="labSeedStatus" class="learning-status" style="margin-top:.75rem;"></div>
                 </article>
+                <article class="result-card">
+                  <p class="eyebrow">Schema Editor</p>
+                  <h3>Review detected columns</h3>
+                  <p class="panel-copy">Move columns between numeric and categorical before retraining.</p>
+                  <form id="schemaEditorForm" class="schema-editor">
+                    <label>Numerical columns<textarea id="schemaNumerical" rows="4" placeholder="tenure&#10;MonthlyCharges&#10;TotalCharges"></textarea></label>
+                    <label>Categorical columns<textarea id="schemaCategorical" rows="4" placeholder="Contract: Month-to-month, One year, Two year&#10;InternetService: DSL, Fiber optic, No"></textarea></label>
+                    <button type="submit" class="primary">Save schema</button>
+                    <p id="schemaEditorMessage" class="message"></p>
+                  </form>
+                </article>
+                <article class="result-card">
+                  <p class="eyebrow">Review Queue</p>
+                  <h3>Approve training rows</h3>
+                  <p class="panel-copy">Only approved labeled rows should influence the next company model.</p>
+                  <div id="learningReviewSummary" class="learning-status"></div>
+                  <div id="learningReviewTable" class="table-wrap compact-table"></div>
+                  <div class="review-actions">
+                    <button id="approveLearningRows" type="button" class="primary">Approve selected</button>
+                    <button id="rejectLearningRows" type="button">Reject selected</button>
+                  </div>
+                </article>
                 <article class="result-card" style="grid-column: 1 / -1;">
                   <p class="eyebrow">Training Guide</p>
                   <h3>How to improve your model</h3>
