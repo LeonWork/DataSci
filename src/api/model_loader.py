@@ -65,6 +65,7 @@ class ChurnPredictor:
             self.feature_names    = meta.get("feature_names", [])
             self.training_metrics = meta.get("metrics", {})
         self._loaded = True
+        self.last_mtime = self.model_path.stat().st_mtime
         logger.info("Model loaded ✓ — %d features", len(self.feature_names))
 
     @property
@@ -174,6 +175,17 @@ class ModelRouter:
             predictor = ChurnPredictor(company_id)
             predictor.load()
             self.predictors[company_id] = predictor
+        else:
+            predictor = self.predictors[company_id]
+            # Auto-reload if model file is updated on disk
+            if predictor.model_path.exists():
+                current_mtime = predictor.model_path.stat().st_mtime
+                if current_mtime > getattr(predictor, "last_mtime", 0):
+                    logger.info("Model file changed on disk for %s. Reloading...", company_id)
+                    try:
+                        predictor.load()
+                    except Exception as e:
+                        logger.error("Failed to reload model for %s: %s", company_id, e)
         return self.predictors[company_id]
 
 # Singleton router loaded once at startup
