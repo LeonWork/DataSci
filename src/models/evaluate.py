@@ -71,6 +71,27 @@ def compute_metrics(
     return metrics
 
 
+def threshold_report(
+    model,
+    X_test: np.ndarray,
+    y_test: np.ndarray,
+    thresholds: list[float] | None = None,
+) -> list[dict[str, float]]:
+    """Evaluate precision/recall/F1 tradeoffs across candidate thresholds."""
+    y_prob = model.predict_proba(X_test)[:, 1]
+    report = []
+    for threshold in thresholds or [0.25, 0.3, 0.35, 0.4, 0.5, 0.6]:
+        y_pred = (y_prob >= threshold).astype(int)
+        report.append({
+            "threshold": round(float(threshold), 4),
+            "f1": round(float(f1_score(y_test, y_pred, zero_division=0)), 4),
+            "precision": round(float(precision_score(y_test, y_pred, zero_division=0)), 4),
+            "recall": round(float(recall_score(y_test, y_pred, zero_division=0)), 4),
+            "accuracy": round(float(accuracy_score(y_test, y_pred)), 4),
+        })
+    return report
+
+
 def log_confusion_matrix(
     model,
     X_test: np.ndarray,

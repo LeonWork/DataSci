@@ -56,6 +56,7 @@ const onboardMessage = document.querySelector("#onboardMessage");
 let lastCustomer = null;
 let lastPrediction = null;
 let lastBatchRows = [];
+let currentSchema = null;
 
 const highRiskPreset = {
   gender: "Female",
@@ -315,16 +316,35 @@ function applyPreset(preset) {
 
 function customerFromForm() {
   const customer = formToObject(profileForm);
-  return {
-    customerID: "WEB-USER",
-    ...customer,
-    tenure: Number(customer.tenure),
-    MonthlyCharges: Number(customer.MonthlyCharges),
-    TotalCharges: Number(customer.TotalCharges),
-  };
+  const schemaNumbers = currentSchema?.numerical || [];
+  schemaNumbers.forEach((field) => {
+    if (field in customer) customer[field] = Number(customer[field]);
+  });
+  return { customerID: "WEB-USER", ...customer };
 }
 
 function recommendationText(customer, risk) {
+  const telcoFields = ["Contract", "tenure", "TechSupport", "InternetService", "MonthlyCharges", "StreamingTV"];
+  const hasTelcoShape = telcoFields.some((field) => field in customer);
+  if (!hasTelcoShape) {
+    if (risk === "High") {
+      return [
+        "Prioritize this account for retention review.",
+        "Inspect the strongest risk drivers and compare them against recent customer activity.",
+        "Assign a specific owner and track the outcome for future model learning.",
+      ];
+    }
+    if (risk === "Medium") {
+      return [
+        "Monitor this account and add it to a proactive check-in segment.",
+        "Review the top drivers before the next renewal or usage milestone.",
+      ];
+    }
+    return [
+      "Keep this customer in the normal monitoring cadence.",
+      "Use future outcomes to confirm whether the model remains calibrated.",
+    ];
+  }
   const recs = [];
   if (risk === "High") {
     if (customer.Contract === "Month-to-month") recs.push("Offer a discounted annual contract migration.");
@@ -579,6 +599,7 @@ async function loadSchema() {
       if (!r.ok) throw new Error("Failed to load schema");
       return r.json();
     });
+    currentSchema = data;
     
     let html = "";
     const numCols = data.numerical || [];
@@ -1000,7 +1021,7 @@ document.getElementById("adminRetrainAll")?.addEventListener("click", async () =
   try {
     const data = await postJson("/admin/retrain", {});
     if (msg) {
-      msg.textContent = "✅ " + data.message;
+      msg.textContent = `✅ ${data.message} Run #${data.run_id || ""}`;
       msg.style.color = "var(--green)";
     }
   } catch (error) {

@@ -56,7 +56,7 @@ class PredictionResponse(BaseModel):
 
 
 class BatchPredictionRequest(BaseModel):
-    customers: list[CustomerFeatures]
+    customers: list[dict]
 
 
 class BatchPredictionResponse(BaseModel):
@@ -188,4 +188,3 @@ class CompanyOnboardResponse(BaseModel):
 
 class ImpersonateRequest(BaseModel):
     company_id: str
-

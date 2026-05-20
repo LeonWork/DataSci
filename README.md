@@ -102,7 +102,7 @@ jupyter lab notebooks/01_eda.ipynb
 | Layer | Tools |
 |-------|-------|
 | **Core** | Python 3.11, Pandas, NumPy, Scikit-learn |
-| **ML** | Scikit-learn Random Forest, XGBoost/LightGBM comparison track, SHAP-style explanations |
+| **ML** | Scikit-learn, XGBoost, LightGBM, model comparison reports, local impact explanations |
 | **MLOps** | MLflow, DVC (optional) |
 | **API** | FastAPI, Pydantic, Uvicorn |
 | **Web App** | FastAPI StaticFiles, HTML, CSS, JavaScript |
@@ -115,10 +115,10 @@ jupyter lab notebooks/01_eda.ipynb
 
 | Model | F1-Score | ROC-AUC | Precision | Recall |
 |-------|----------|---------|-----------|--------|
-| **RandomForestClassifier (current)** | 0.5428 | 0.7897 | 0.4611 | 0.6596 |
-| Logistic Regression (next comparison) | — | — | — | — |
-| XGBoost (next comparison) | — | — | — | — |
-| LightGBM (next comparison) | — | — | — | — |
+| Logistic Regression | 0.6054 | 0.8404 | 0.4944 | 0.7807 |
+| Random Forest | 0.6074 | 0.8419 | 0.5012 | 0.7709 |
+| **XGBoost (current global)** | **0.6153** | **0.8467** | **0.5117** | **0.7716** |
+| LightGBM | 0.6131 | 0.8453 | 0.5044 | 0.7815 |
 
 ---
 
@@ -155,7 +155,7 @@ GET  /health         — API health check
 ```mermaid
 flowchart LR
     A["Admin user"] --> B["FastAPI app"]
-    B --> C["RandomForest model artifact"]
+    B --> C["Tenant-routed model artifact"]
     B --> D["Pilot product store"]
     D --> E["Prediction events"]
     D --> F["CSV upload batches"]
@@ -163,7 +163,7 @@ flowchart LR
     B --> H["Static dashboard UI"]
 ```
 
-The pilot now records prediction events, CSV scoring batches, and learning rows in a local SQLite product store. This is intentionally shaped like the future Postgres schema so we can move to Neon when real company uploads need durable cloud storage. Until then, local storage avoids unnecessary spending.
+The pilot records prediction events, CSV scoring batches, learning rows, tenant schemas, and model training status in SQLAlchemy storage. Local development and tests use SQLite; production can use Neon/Postgres by setting `DATABASE_URL`.
 
 ## 🔐 Web App Login
 
@@ -289,24 +289,27 @@ This release is designed to look and behave like a real internal company tool:
 - Database-backed app users with bcrypt password hashes
 - Workspace-aware sessions with `company_id` and role claims
 - Tenant-scoped prediction, upload, learning, and admin-summary records
+- Tenant-specific schemas and model artifacts routed by `company_id`
+- Dynamic JSON and CSV prediction for non-Telco customer schemas
 - Workspace member tracking for owner/analyst/viewer readiness
 - CSV validation reports with row-level errors for scoring and learning uploads
-- Corrected model documentation for the current RandomForestClassifier artifact
+- Model comparison metadata, threshold reports, and retraining status history
 
 ### Immediate Next Steps
 
-The app is Postgres-ready and now has upload validation/error reporting. The next
-step is to create the Neon database and connect it to local/Vercel environments.
+The app is now Postgres-ready, schema-adaptive, and has model comparison metadata.
+The next step is to harden the pilot workflow around real customer onboarding and
+model trust.
 
 Recommended order:
 
-1. Create a Neon Postgres project.
-2. Set `DATABASE_URL` locally and in Vercel.
-3. Run the app once so SQLAlchemy creates the production tables.
-4. Seed your owner account into Postgres using the existing admin environment credentials.
-5. Add admin-created company onboarding instead of environment-variable workspace setup.
+1. Use Neon for production prediction/upload history; keep local tests isolated on SQLite.
+2. Onboard a demo tenant through the admin panel and upload a seed CSV to define its schema.
+3. Upload labeled rows, trigger retraining, and verify `/admin/retrain/status`.
+4. Add a schema editor for correcting inferred numerical/categorical columns.
+5. Add model drift and post-outcome performance monitoring.
 6. Add deployment smoke tests for protected APIs, database connection, and dashboard loading.
-7. Add basic audit logs for login, upload, prediction, export, and learning-row review events.
+7. Add a resume-ready walkthrough with screenshots and the model comparison story.
 
 ### Neon Setup Checklist
 
@@ -329,10 +332,10 @@ The app can keep using local SQLite until this checklist is done.
 
 The model should improve through disciplined evaluation before spending on heavy AI infrastructure:
 
-1. Compare Random Forest, Logistic Regression, XGBoost, and LightGBM on the same split.
-2. Track ROC-AUC, PR-AUC, F1, precision, recall, and calibration.
-3. Tune decision thresholds for business goals, especially recall-heavy retention workflows.
-4. Add a model registry with production and candidate model states.
+1. Continue comparing Logistic Regression, Random Forest, XGBoost, and LightGBM on the same split.
+2. Track ROC-AUC, PR-AUC, F1, precision, recall, Brier score, and threshold tradeoffs.
+3. Promote models using the balanced pilot score saved in model metadata.
+4. Expand the model registry from training status into production/candidate promotion states.
 5. Require reviewed learning rows before retraining.
 6. Monitor prediction distribution drift, feature drift, label balance, and post-outcome performance.
 

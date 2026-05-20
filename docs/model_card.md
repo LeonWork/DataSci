@@ -4,12 +4,12 @@
 
 | Field | Value |
 |-------|-------|
-| Model type | RandomForestClassifier |
+| Model type | XGBoost selected from Logistic Regression, Random Forest, XGBoost, and LightGBM comparison |
 | Task | Binary classification: churn vs. no churn |
-| Dataset | IBM Telco Customer Churn |
+| Dataset | IBM Telco Customer Churn plus compatible labeled Telco rows |
 | Target | `Churn` |
 | Version | 1.0.0 |
-| Current status | Pilot model, not yet company-calibrated |
+| Current status | Pilot model with tenant-specific adaptation support |
 
 ## Intended Use
 
@@ -22,10 +22,10 @@ This model is appropriate for retention triage and portfolio demonstrations. It 
 | Property | Value |
 |----------|-------|
 | Source | IBM Telco Customer Churn sample dataset |
-| Size | 7,043 customers |
+| Size | 57,043 compatible Telco-style rows in the current global training run |
 | Positive class | `Churn = Yes` |
 | Churn rate | About 26.5% |
-| Feedback rows | Optional reviewed company rows from `data/company_feedback.csv` and `data/external/labeled_churn/` |
+| Feedback rows | Optional reviewed company rows from Postgres learning rows and `data/external/labeled_churn/` |
 
 ## Features
 
@@ -44,17 +44,19 @@ The model uses original customer attributes plus engineered account signals:
 
 ## Current Performance
 
-The deployed artifact in `models/model_meta.json` reports:
+The current global artifact in `models/global_model_meta.json` reports:
 
 | Metric | Score |
 |--------|-------|
-| ROC-AUC | 0.7897 |
-| F1 | 0.5428 |
-| Accuracy | 0.7381 |
-| Precision | 0.4611 |
-| Recall | 0.6596 |
+| ROC-AUC | 0.8467 |
+| PR-AUC | 0.6340 |
+| Brier score | 0.1573 |
+| F1 | 0.6153 |
+| Accuracy | 0.7690 |
+| Precision | 0.5117 |
+| Recall | 0.7716 |
 
-The next ML upgrade should compare Random Forest, Logistic Regression, XGBoost, and LightGBM under the same reproducible split, then choose a threshold based on the business goal. A retention team may prefer higher recall even if precision falls, because missing true churners can be more expensive than contacting extra customers.
+The training script now saves a model comparison report and threshold report. The current production selection uses a balanced pilot score across ROC-AUC, PR-AUC, F1, and calibration/Brier quality rather than chasing one metric alone.
 
 ## Explainability
 
@@ -64,15 +66,15 @@ Typical risk drivers in this dataset include short tenure, month-to-month contra
 
 ## Limitations
 
-- The model is trained on a public telecom dataset and is not yet calibrated to a specific company.
+- The global model is trained on public/compatible telecom-style data and is not yet calibrated to a specific real company.
 - Prediction quality may drift if pricing, products, contracts, or customer behavior change.
 - Demographic fields such as gender and senior-citizen status require fairness review before production use.
-- Uploaded company feedback is queued for retraining, but the current app still needs review, approval, registry, and promotion controls before automated production retraining.
+- Uploaded company feedback is queued for retraining, and the app records training status, but it still needs approval and production/candidate promotion controls before automated production retraining.
 
 ## Roadmap
 
-1. Add a model comparison report with ROC-AUC, PR-AUC, F1, precision, recall, and calibration.
-2. Add a model registry that separates production and candidate models.
+1. Add a schema editor for correcting inferred tenant schemas before retraining.
+2. Expand the model registry so production and candidate models are separated.
 3. Add reviewed learning-row states: `queued`, `approved_for_training`, and `used_in_model`.
 4. Add drift monitoring and a `retrain_recommended` signal.
 5. Add company-level calibration after enough labeled outcomes are collected.

@@ -15,6 +15,7 @@ Outputs (in models/):
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -25,17 +26,27 @@ from dotenv import load_dotenv
 load_dotenv(ROOT / ".env")
 
 import joblib
+import optuna
 import pandas as pd
+from lightgbm import LGBMClassifier
 
 from src.data.pipeline import (
     build_pipeline,
     prepare_dataframe,
 )
 from src.data.load_data import load_raw
-from src.models.evaluate import compute_metrics
+from src.models.evaluate import compute_metrics, threshold_report
 from src.models.train import train_all_baselines
 from src.models.tune import run_study, get_best_model
-from src.api.storage import engine, learning_rows, company_schemas, get_company_schema, init_storage, companies
+from src.api.storage import (
+    engine,
+    learning_rows,
+    get_company_schema,
+    init_storage,
+    companies,
+    start_training_run,
+    finish_training_run,
+)
 from sqlalchemy import select
 from src.utils.logger import get_logger
 from sklearn.model_selection import train_test_split
@@ -69,6 +80,93 @@ EXTERNAL_COLUMN_MAP = {
     "Churn Label": "Churn",
     "Churn Value": "Churn",
 }
+NUMERIC_DETECTION_THRESHOLD = 0.9
+
+
+def _is_numeric_like(series: pd.Series) -> bool:
+    non_empty = series.dropna()
+    non_empty = non_empty[non_empty.astype(str).str.strip() != ""]
+    if non_empty.empty:
+        return False
+    converted = pd.to_numeric(non_empty, errors="coerce")
+    return float(converted.notna().mean()) >= NUMERIC_DETECTION_THRESHOLD
+
+
+def _split_feature_columns(X: pd.DataFrame, schema: dict | None) -> tuple[list[str], list[str]]:
+    schema_num = list((schema or {}).get("numerical", []))
+    schema_cat_raw = (schema or {}).get("categorical", {})
+    schema_cat = list(schema_cat_raw.keys()) if isinstance(schema_cat_raw, dict) else list(schema_cat_raw or [])
+    num_cols = [c for c in schema_num if c in X.columns]
+    cat_cols = [c for c in schema_cat if c in X.columns and c not in num_cols]
+
+    for column in X.columns:
+        if column in num_cols or column in cat_cols:
+            continue
+        if pd.api.types.is_numeric_dtype(X[column]) or _is_numeric_like(X[column]):
+            num_cols.append(column)
+        else:
+            cat_cols.append(column)
+
+    repaired_cat_cols = []
+    for column in cat_cols:
+        if _is_numeric_like(X[column]):
+            X[column] = pd.to_numeric(X[column], errors="coerce")
+            num_cols.append(column)
+        else:
+            repaired_cat_cols.append(column)
+    return num_cols, repaired_cat_cols
+
+
+def _balanced_score(metrics: dict) -> float:
+    return round(
+        0.45 * float(metrics.get("roc_auc", 0))
+        + 0.25 * float(metrics.get("pr_auc", 0))
+        + 0.20 * float(metrics.get("f1", 0))
+        + 0.10 * (1 - float(metrics.get("brier", 1))),
+        6,
+    )
+
+
+def _tune_lightgbm(X_train, y_train, X_test, y_test, n_trials: int = 20) -> dict:
+    def objective(trial):
+        params = {
+            "n_estimators": trial.suggest_int("n_estimators", 100, 700),
+            "num_leaves": trial.suggest_int("num_leaves", 15, 80),
+            "max_depth": trial.suggest_int("max_depth", 3, 10),
+            "learning_rate": trial.suggest_float("learning_rate", 0.01, 0.2, log=True),
+            "subsample": trial.suggest_float("subsample", 0.55, 1.0),
+            "colsample_bytree": trial.suggest_float("colsample_bytree", 0.55, 1.0),
+            "min_child_samples": trial.suggest_int("min_child_samples", 5, 60),
+            "reg_alpha": trial.suggest_float("reg_alpha", 0.0, 2.0),
+            "reg_lambda": trial.suggest_float("reg_lambda", 0.0, 5.0),
+            "class_weight": "balanced",
+            "random_state": 42,
+            "n_jobs": -1,
+            "verbose": -1,
+        }
+        model = LGBMClassifier(**params)
+        model.fit(X_train, y_train)
+        return compute_metrics(model, X_test, y_test)["roc_auc"]
+
+    study = optuna.create_study(
+        direction="maximize",
+        sampler=optuna.samplers.TPESampler(seed=42),
+    )
+    study.optimize(objective, n_trials=n_trials, show_progress_bar=False, n_jobs=1)
+    model = LGBMClassifier(
+        **study.best_params,
+        class_weight="balanced",
+        random_state=42,
+        n_jobs=-1,
+        verbose=-1,
+    )
+    model.fit(X_train, y_train)
+    return {
+        "model": model,
+        "metrics": compute_metrics(model, X_test, y_test),
+        "best_params": study.best_params,
+        "best_cv_auc": study.best_value,
+    }
 
 
 def load_training_data(company_id: str = "global") -> pd.DataFrame:
@@ -173,109 +271,144 @@ def _normalize_external_columns(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def train_for_company(company_id: str) -> None:
+def train_for_company(company_id: str) -> dict:
+    run_id = start_training_run(company_id, status="running")
     logger.info("Loading raw data for %s …", company_id)
-    df_raw = load_training_data(company_id)
-
-    if company_id == "global":
-        logger.info("Preprocessing + feature engineering …")
-        X, y = prepare_dataframe(df_raw)
-    else:
-        logger.info("Generic preprocessing for tenant %s …", company_id)
-        # Drop metadata columns that aren't features
-        drop_cols = [c for c in ["customerID", "source_file", "uploaded_at"] if c in df_raw.columns]
-        df_clean = df_raw.drop(columns=drop_cols, errors="ignore")
-        # Encode target
-        if "Churn" in df_clean.columns:
-            df_clean["Churn"] = df_clean["Churn"].map({"Yes": 1, "No": 0, 1: 1, 0: 0}).fillna(0).astype(int)
-        # Fill numeric NaN with 0, categorical NaN with "Unknown"
-        for col in df_clean.columns:
-            if col == "Churn":
-                continue
-            if pd.api.types.is_numeric_dtype(df_clean[col]):
-                df_clean[col] = df_clean[col].fillna(0)
-            else:
-                df_clean[col] = df_clean[col].fillna("Unknown")
-        y = df_clean["Churn"]
-        X = df_clean.drop(columns=["Churn"])
-
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.2, stratify=y, random_state=42
-    )
-
-    schema = get_company_schema(company_id) if company_id != "global" else None
-    if schema:
-        num_cols = schema.get("numerical", [])
-        cat_dict_or_list = schema.get("categorical", {})
-        cat_cols = list(cat_dict_or_list.keys()) if isinstance(cat_dict_or_list, dict) else cat_dict_or_list
-        # Only keep columns that actually exist in X
-        num_cols = [c for c in num_cols if c in X.columns]
-        cat_cols = [c for c in cat_cols if c in X.columns]
-    else:
-        num_cols = [c for c in X.columns if pd.api.types.is_numeric_dtype(X[c])]
-        cat_cols = [c for c in X.columns if c not in num_cols]
-
-    logger.info("Fitting sklearn pipeline …")
-    pipe = build_pipeline(numerical_features=num_cols, categorical_features=cat_cols)
-    X_train_t = pipe.fit_transform(X_train)
-    X_test_t  = pipe.transform(X_test)
-
-    logger.info("Training and evaluating all baseline models …")
-    baselines = train_all_baselines(X_train_t, y_train, X_test_t, y_test, log_to_mlflow=False)
-    
     try:
-        logger.info("Running Optuna hyperparameter optimization on XGBoost …")
-        study = run_study(X_train_t, y_train, n_trials=30, show_progress=False)
-        tuned_xgb = get_best_model(study, X_train_t, y_train)
-        tuned_metrics = compute_metrics(tuned_xgb, X_test_t, y_test)
-        logger.info("XGBoost_Tuned → AUC=%.4f  F1=%.4f", tuned_metrics["roc_auc"], tuned_metrics["f1"])
-        baselines["XGBoost_Tuned"] = {
-            "model": tuned_xgb,
-            "metrics": tuned_metrics,
+        df_raw = load_training_data(company_id)
+
+        if company_id == "global":
+            logger.info("Preprocessing + feature engineering …")
+            X, y = prepare_dataframe(df_raw)
+        else:
+            logger.info("Generic preprocessing for tenant %s …", company_id)
+            drop_cols = [c for c in ["customerID", "source_file", "uploaded_at"] if c in df_raw.columns]
+            df_clean = df_raw.drop(columns=drop_cols, errors="ignore")
+            if "Churn" in df_clean.columns:
+                df_clean["Churn"] = df_clean["Churn"].map({"Yes": 1, "No": 0, 1: 1, 0: 0}).fillna(0).astype(int)
+            for col in df_clean.columns:
+                if col == "Churn":
+                    continue
+                if pd.api.types.is_numeric_dtype(df_clean[col]) or _is_numeric_like(df_clean[col]):
+                    df_clean[col] = pd.to_numeric(df_clean[col], errors="coerce").fillna(0)
+                else:
+                    df_clean[col] = df_clean[col].fillna("Unknown")
+            y = df_clean["Churn"]
+            X = df_clean.drop(columns=["Churn"])
+
+        X_train, X_test, y_train, y_test = train_test_split(
+            X, y, test_size=0.2, stratify=y, random_state=42
+        )
+
+        schema = get_company_schema(company_id) if company_id != "global" else None
+        num_cols, cat_cols = _split_feature_columns(X, schema)
+
+        logger.info("Fitting sklearn pipeline …")
+        pipe = build_pipeline(numerical_features=num_cols, categorical_features=cat_cols)
+        X_train_t = pipe.fit_transform(X_train)
+        X_test_t = pipe.transform(X_test)
+
+        logger.info("Training and evaluating all baseline models …")
+        baselines = train_all_baselines(X_train_t, y_train, X_test_t, y_test, log_to_mlflow=False)
+        tuning_trials = int(os.getenv("CHURNGUARD_TUNING_TRIALS", "40"))
+
+        try:
+            logger.info("Running Optuna hyperparameter optimization on XGBoost …")
+            study = run_study(X_train_t, y_train, n_trials=tuning_trials, show_progress=False)
+            tuned_xgb = get_best_model(study, X_train_t, y_train)
+            tuned_metrics = compute_metrics(tuned_xgb, X_test_t, y_test)
+            logger.info("XGBoost_Tuned → AUC=%.4f  F1=%.4f", tuned_metrics["roc_auc"], tuned_metrics["f1"])
+            baselines["XGBoost_Tuned"] = {
+                "model": tuned_xgb,
+                "metrics": tuned_metrics,
+                "best_params": study.best_params,
+                "best_cv_auc": study.best_value,
+            }
+        except Exception as exc:
+            logger.warning("Optuna XGBoost tuning failed: %s. Using other candidates.", exc)
+
+        try:
+            logger.info("Running Optuna hyperparameter optimization on LightGBM …")
+            baselines["LightGBM_Tuned"] = _tune_lightgbm(
+                X_train_t,
+                y_train,
+                X_test_t,
+                y_test,
+                n_trials=max(15, tuning_trials // 2),
+            )
+        except Exception as exc:
+            logger.warning("Optuna LightGBM tuning failed: %s. Using other candidates.", exc)
+
+        comparison = {
+            name: {
+                "metrics": result["metrics"],
+                "balanced_score": _balanced_score(result["metrics"]),
+                "best_params": result.get("best_params", {}),
+                "best_cv_auc": result.get("best_cv_auc"),
+            }
+            for name, result in baselines.items()
         }
-    except Exception as e:
-        logger.warning("Optuna hyperparameter tuning failed: %s. Using baselines only.", e)
+        best_model_name = max(baselines.keys(), key=lambda k: comparison[k]["balanced_score"])
+        best_model_info = baselines[best_model_name]
+        model = best_model_info["model"]
+        metrics = best_model_info["metrics"]
+        thresholds = threshold_report(model, X_test_t, y_test)
 
-    # Find the model with the highest test ROC-AUC score
-    best_model_name = max(baselines.keys(), key=lambda k: baselines[k]["metrics"]["roc_auc"])
-    best_model_info = baselines[best_model_name]
-    model = best_model_info["model"]
-    metrics = best_model_info["metrics"]
+        logger.info("=========================================")
+        logger.info(
+            "Selected BEST model: %s with balanced score %.4f and Test AUC %.4f",
+            best_model_name,
+            comparison[best_model_name]["balanced_score"],
+            metrics["roc_auc"],
+        )
+        logger.info("=========================================")
 
-    logger.info("=========================================")
-    logger.info("Selected BEST model: %s with Test AUC: %.4f", best_model_name, metrics["roc_auc"])
-    logger.info("=========================================")
+        try:
+            feature_names = pipe.get_feature_names_out().tolist()
+        except Exception:
+            feature_names = [f"f{i}" for i in range(X_train_t.shape[1])]
 
-    # Feature names from pipeline
-    try:
-        feature_names = pipe.get_feature_names_out().tolist()
-    except Exception:
-        feature_names = [f"f{i}" for i in range(X_train_t.shape[1])]
+        model_path = MODELS_DIR / f"{company_id}_model.joblib"
+        pipeline_path = MODELS_DIR / f"{company_id}_pipeline.joblib"
+        meta_path = MODELS_DIR / f"{company_id}_model_meta.json"
 
-    # Save artefacts
-    model_path    = MODELS_DIR / f"{company_id}_model.joblib"
-    pipeline_path = MODELS_DIR / f"{company_id}_pipeline.joblib"
-    meta_path     = MODELS_DIR / f"{company_id}_model_meta.json"
+        joblib.dump(model, model_path)
+        joblib.dump(pipe, pipeline_path)
+        meta = {
+            "company_id": company_id,
+            "feature_names": feature_names,
+            "metrics": metrics,
+            "num_features": num_cols,
+            "cat_features": cat_cols,
+            "model_family": best_model_name,
+            "model_comparison": comparison,
+            "threshold_report": thresholds,
+            "selection_metric": "balanced_score",
+        }
+        meta_path.write_text(json.dumps(meta, indent=2))
+        finish_training_run(
+            run_id,
+            status="succeeded",
+            model_family=best_model_name,
+            metrics=metrics,
+            artifact_paths={
+                "model": str(model_path),
+                "pipeline": str(pipeline_path),
+                "metadata": str(meta_path),
+            },
+        )
 
-    joblib.dump(model, model_path)
-    joblib.dump(pipe, pipeline_path)
-    meta_path.write_text(json.dumps({
-        "company_id":    company_id,
-        "feature_names": feature_names,
-        "metrics":       metrics,
-        "num_features":  num_cols,
-        "cat_features":  cat_cols,
-        "model_family":  best_model_name,
-    }, indent=2))
-
-    logger.info("Saved model      → %s", model_path)
-    logger.info("Saved pipeline   → %s", pipeline_path)
-    logger.info("Saved meta       → %s", meta_path)
-
-    logger.info("\n=== Training Results ===")
-    for k, v in metrics.items():
-        logger.info("  %-12s %.4f", k, v)
-    logger.info("\nRun the web app:  uvicorn src.api.main:app --reload --port 8000")
+        logger.info("Saved model      → %s", model_path)
+        logger.info("Saved pipeline   → %s", pipeline_path)
+        logger.info("Saved meta       → %s", meta_path)
+        logger.info("\n=== Training Results ===")
+        for k, v in metrics.items():
+            logger.info("  %-12s %.4f", k, v)
+        logger.info("\nRun the web app:  uvicorn src.api.main:app --reload --port 8000")
+        return meta
+    except Exception as exc:
+        finish_training_run(run_id, status="failed", error_message=str(exc))
+        raise
 
 
 def main() -> None:

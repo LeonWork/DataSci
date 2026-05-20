@@ -201,6 +201,55 @@ class TestPredict:
         resp = c.post("/predict", json=SAMPLE_CUSTOMER)
         assert resp.status_code == 401
 
+    def test_dynamic_tenant_payload_accepts_schema_fields(self, client):
+        from src.api.storage import save_company_schema
+
+        save_company_schema("acme-dynamic", {
+            "numerical": ["days_since_last_purchase", "total_spent"],
+            "categorical": {"plan": ["Free", "Pro"]},
+        })
+        token = create_session_token_for_user({
+            "username": "owner-acme",
+            "email": "owner@acme.test",
+            "company_id": "acme-dynamic",
+            "role": "owner",
+        })
+        client.headers.update({"Authorization": f"Bearer {token}"})
+
+        resp = client.post("/predict", json={
+            "customerID": "DYN-001",
+            "days_since_last_purchase": "12",
+            "total_spent": 830.50,
+            "plan": "Pro",
+        })
+
+        assert resp.status_code == 200
+        assert resp.json()["risk_level"] == "High"
+
+    def test_dynamic_tenant_payload_reports_validation_errors(self, client):
+        from src.api.storage import save_company_schema
+
+        save_company_schema("acme-dynamic", {
+            "numerical": ["days_since_last_purchase"],
+            "categorical": {"plan": ["Free", "Pro"]},
+        })
+        token = create_session_token_for_user({
+            "username": "owner-acme",
+            "email": "owner@acme.test",
+            "company_id": "acme-dynamic",
+            "role": "owner",
+        })
+        client.headers.update({"Authorization": f"Bearer {token}"})
+
+        resp = client.post("/predict", json={
+            "days_since_last_purchase": "soon",
+            "plan": "Enterprise",
+        })
+
+        assert resp.status_code == 400
+        errors = resp.json()["detail"]["errors"]
+        assert {error["code"] for error in errors} == {"invalid_number", "invalid_value"}
+
 
 # ── /predict-batch ────────────────────────────────────────────────────────────
 
@@ -350,6 +399,66 @@ class TestAdminSummary:
         body = client.get("/admin/summary").json()
         assert body["total_predictions"] == 0
         assert body["high_risk_predictions"] == 0
+
+    def test_schema_inference_detects_numeric_strings(self, client):
+        row = {
+            "customerID": "DYN-CSV-001",
+            "days_since_last_purchase": "14",
+            "total_spent": "420.50",
+            "plan": "Pro",
+        }
+        token = create_session_token_for_user({
+            "username": "owner-dyn",
+            "email": "dyn@example.com",
+            "company_id": "dynamic-csv",
+            "role": "owner",
+        })
+        client.headers.update({"Authorization": f"Bearer {token}"})
+
+        resp = client.post(
+            "/predict-csv",
+            files={"file": ("dynamic.csv", BytesIO(_csv_from_row(row)), "text/csv")},
+        )
+
+        assert resp.status_code == 200
+        from src.api.storage import get_company_schema
+
+        schema = get_company_schema("dynamic-csv")
+        assert "days_since_last_purchase" in schema["numerical"]
+        assert "total_spent" in schema["numerical"]
+        assert "plan" in schema["categorical"]
+
+    def test_retraining_status_records_runs(self, client):
+        from src.api.storage import start_training_run, finish_training_run
+
+        run_id = start_training_run("default", status="running")
+        finish_training_run(
+            run_id,
+            status="succeeded",
+            model_family="XGBoost_Tuned",
+            metrics={"roc_auc": 0.86, "f1": 0.6},
+        )
+
+        resp = client.get("/admin/retrain/status")
+
+        assert resp.status_code == 200
+        run = resp.json()["runs"][0]
+        assert run["status"] == "succeeded"
+        assert run["model_family"] == "XGBoost_Tuned"
+        assert run["metrics"]["roc_auc"] == 0.86
+
+    def test_failed_retraining_status_preserves_error(self, client):
+        from src.api.storage import start_training_run, finish_training_run
+
+        run_id = start_training_run("default", status="running")
+        finish_training_run(run_id, status="failed", error_message="candidate model failed")
+
+        resp = client.get("/admin/retrain/status")
+
+        assert resp.status_code == 200
+        run = resp.json()["runs"][0]
+        assert run["status"] == "failed"
+        assert run["error_message"] == "candidate model failed"
 
 
 class TestLearningQueue:

@@ -24,9 +24,10 @@ import os
 from pathlib import Path
 
 import pandas as pd
-from fastapi import Depends, FastAPI, File, Header, HTTPException, UploadFile, status
+from fastapi import Body, Depends, FastAPI, File, Header, HTTPException, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from pydantic import ValidationError
 
 from src.api.auth import (
     AuthenticatedUser,
@@ -74,7 +75,11 @@ from src.api.storage import (
     ensure_company,
     record_audit_event,
     get_company_schema,
+    latest_training_status,
+    clear_company_data,
     save_company_schema,
+    start_training_run,
+    finish_training_run,
 )
 from src.utils.logger import get_logger
 
@@ -133,6 +138,8 @@ CSV_NUMERIC_RANGES = {
     "MonthlyCharges": (0, 999),
     "TotalCharges": (0, None),
 }
+SCHEMA_METADATA_COLS = {"customerID", "customer_id", "Churn", "source_file", "uploaded_at"}
+GLOBAL_COMPANY_IDS = {"default", "global"}
 
 
 # ── Lifespan ──────────────────────────────────────────────────────────────────
@@ -257,27 +264,59 @@ def _raise_csv_validation_error(issues: list[dict]) -> None:
     )
 
 
+def _default_telco_schema() -> dict:
+    categorical = {column: sorted(values) for column, values in CSV_ALLOWED_VALUES.items()}
+    return {
+        "numerical": list(CSV_NUMERIC_RANGES.keys()),
+        "categorical": categorical,
+    }
+
+
+def _is_numeric_like(series: pd.Series) -> bool:
+    non_empty = series.dropna()
+    non_empty = non_empty[non_empty.astype(str).str.strip() != ""]
+    if non_empty.empty:
+        return False
+    converted = pd.to_numeric(non_empty, errors="coerce")
+    return float(converted.notna().mean()) >= 0.9
+
+
+def _infer_schema_from_df(df: pd.DataFrame, company_id: str) -> dict:
+    if company_id in GLOBAL_COMPANY_IDS:
+        return _default_telco_schema()
+
+    num_cols = []
+    cat_cols = {}
+    for col in df.columns:
+        if col in SCHEMA_METADATA_COLS:
+            continue
+        if pd.api.types.is_numeric_dtype(df[col]) or _is_numeric_like(df[col]):
+            num_cols.append(col)
+        else:
+            unique_vals = df[col].dropna().astype(str).unique().tolist()
+            cat_cols[col] = unique_vals[:20]
+    return {"numerical": num_cols, "categorical": cat_cols}
+
+
+def _schema_columns(schema: dict) -> tuple[list[str], dict]:
+    numerical = list(schema.get("numerical", []))
+    categorical = schema.get("categorical", {})
+    if isinstance(categorical, list):
+        categorical = {column: [] for column in categorical}
+    return numerical, categorical
+
+
 def _validate_customer_csv(df: pd.DataFrame, *, company_id: str, require_churn: bool, max_rows: int) -> tuple[pd.DataFrame, dict]:
     schema = get_company_schema(company_id)
     if not schema:
-        num_cols = []
-        cat_cols = {}
-        for col in df.columns:
-            if col in ["customerID", "Churn", "source_file", "uploaded_at"]:
-                continue
-            if pd.api.types.is_numeric_dtype(df[col]):
-                num_cols.append(col)
-            else:
-                # Capture unique values, limit to 20 just in case
-                unique_vals = df[col].dropna().unique().tolist()
-                cat_cols[col] = unique_vals[:20]
-        schema = {"numerical": num_cols, "categorical": cat_cols}
-        save_company_schema(company_id, schema)
-        logger.info("Inferred and saved new schema for %s", company_id)
+        schema = _infer_schema_from_df(df, company_id)
+        if company_id not in GLOBAL_COMPANY_IDS:
+            save_company_schema(company_id, schema)
+            logger.info("Inferred and saved new schema for %s", company_id)
 
-    # For validation, we need the keys of categorical
-    cat_keys = list(schema.get("categorical", {}).keys()) if isinstance(schema.get("categorical"), dict) else schema.get("categorical", [])
-    required_columns = schema.get("numerical", []) + cat_keys + (["Churn"] if require_churn else [])
+    numerical_cols, categorical_dict = _schema_columns(schema)
+    cat_keys = list(categorical_dict.keys())
+    required_columns = numerical_cols + cat_keys + (["Churn"] if require_churn else [])
     issues: list[dict] = []
     
     if df.empty:
@@ -305,9 +344,6 @@ def _validate_customer_csv(df: pd.DataFrame, *, company_id: str, require_churn: 
         
     if not missing:
         # Row-by-row validation of numerical and categorical constraints
-        numerical_cols = schema.get("numerical", [])
-        categorical_dict = schema.get("categorical", {})
-        
         for idx, row in df.iterrows():
             row_num = idx + 2 # 1-indexed row number (row 1 is headers)
             
@@ -360,7 +396,33 @@ def _validate_customer_csv(df: pd.DataFrame, *, company_id: str, require_churn: 
     if issues:
         _raise_csv_validation_error(issues)
 
-    return df.copy(), schema
+    clean = df.copy()
+    for col in numerical_cols:
+        if col in clean.columns:
+            clean[col] = pd.to_numeric(clean[col], errors="coerce")
+    if require_churn and "Churn" in clean.columns:
+        clean["Churn"] = _normalize_churn_values(clean["Churn"])
+
+    return clean, schema
+
+
+def _prediction_payload(payload: dict, company_id: str) -> dict:
+    schema = get_company_schema(company_id)
+    if not schema and company_id in GLOBAL_COMPANY_IDS:
+        try:
+            return CustomerFeatures.model_validate(payload).model_dump()
+        except ValidationError as exc:
+            raise HTTPException(status_code=422, detail=exc.errors()) from exc
+
+    raw, _ = _validate_customer_csv(
+        pd.DataFrame([payload]),
+        company_id=company_id,
+        require_churn=False,
+        max_rows=1,
+    )
+    customer = raw.iloc[0].to_dict()
+    customer.setdefault("customerID", payload.get("customerID") or payload.get("customer_id") or "WEB-USER")
+    return customer
 
 
 def _normalize_churn_values(values: pd.Series) -> pd.Series:
@@ -407,6 +469,13 @@ def _model_auc(company_id: str) -> float | None:
         return None
 
 
+def _model_label(predictor) -> str:
+    family = getattr(predictor, "model_family", "")
+    if isinstance(family, str) and family:
+        return family
+    return type(predictor.model).__name__
+
+
 # ── Routes ────────────────────────────────────────────────────────────────────
 
 @app.get("/health", response_model=HealthResponse, tags=["System"])
@@ -442,10 +511,14 @@ def model_info(session: AuthenticatedUser = Depends(_require_session)) -> ModelI
     _require_model(session.company_id)
     p = router.get_predictor(session.company_id)
     return ModelInfoResponse(
-        model_type=type(p.model).__name__,
+        model_type=_model_label(p),
         n_features=len(p.feature_names),
         feature_names=p.feature_names,
-        training_metrics=p.training_metrics,
+        training_metrics={
+            **p.training_metrics,
+            "model_comparison": getattr(p, "model_comparison", {}) if isinstance(getattr(p, "model_comparison", {}), dict) else {},
+            "threshold_report": getattr(p, "threshold_report", []) if isinstance(getattr(p, "threshold_report", []), list) else [],
+        },
         version="1.0.0",
     )
 
@@ -457,7 +530,7 @@ def admin_summary(session: AuthenticatedUser = Depends(_require_session)) -> Adm
     p = router.get_predictor(session.company_id)
     return AdminSummaryResponse(
         **build_admin_summary(
-            model_type=type(p.model).__name__,
+            model_type=_model_label(p),
             model_version="1.0.0",
             model_auc=_model_auc(session.company_id),
             company_id=session.company_id,
@@ -546,20 +619,41 @@ def retrain_all_models(session: AuthenticatedUser = Depends(_require_session)) -
     import threading
     import sys
     
-    def run_training():
+    run_id = start_training_run(session.company_id, status="running")
+
+    def run_training(training_run_id: int):
         python_bin = sys.executable
         script_path = Path(__file__).resolve().parents[2] / "scripts" / "train_and_save.py"
         try:
             result = subprocess.run([python_bin, str(script_path), "all"], capture_output=True, text=True)
-            print("Retraining completed asynchronously:", result.stdout)
-            if result.stderr:
-                print("Retraining stderr:", result.stderr)
-        except Exception as e:
-            print("Failed to run retraining:", e)
+            if result.returncode == 0:
+                finish_training_run(
+                    training_run_id,
+                    status="succeeded",
+                    metrics={"stdout_tail": result.stdout[-2000:]},
+                )
+            else:
+                finish_training_run(
+                    training_run_id,
+                    status="failed",
+                    error_message=(result.stderr or result.stdout)[-2000:],
+                )
+        except Exception as exc:
+            finish_training_run(training_run_id, status="failed", error_message=str(exc))
             
-    thread = threading.Thread(target=run_training)
+    thread = threading.Thread(target=run_training, args=(run_id,), daemon=True)
     thread.start()
-    return {"status": "success", "message": "Retraining triggered successfully in the background."}
+    return {
+        "status": "running",
+        "run_id": run_id,
+        "message": "Retraining triggered successfully in the background.",
+    }
+
+
+@app.get("/admin/retrain/status", tags=["Admin"])
+def retrain_status(session: AuthenticatedUser = Depends(_require_session)) -> dict:
+    """Return recent model training runs for the active tenant."""
+    return {"runs": latest_training_status(session.company_id)}
 
 
 @app.post("/admin/onboard", response_model=CompanyOnboardResponse, tags=["Admin"])
@@ -639,17 +733,7 @@ def delete_tenant(
     if request.company_id == "default":
         raise HTTPException(status_code=400, detail="Cannot delete default system tenant.")
         
-    from src.api.storage import (
-        engine as get_engine, companies, app_users, prediction_events,
-        learning_rows as lr_table, company_schemas
-    )
-    eng = get_engine()
-    with eng.begin() as conn:
-        conn.execute(prediction_events.delete().where(prediction_events.c.company_id == request.company_id))
-        conn.execute(lr_table.delete().where(lr_table.c.company_id == request.company_id))
-        conn.execute(company_schemas.delete().where(company_schemas.c.company_id == request.company_id))
-        conn.execute(app_users.delete().where(app_users.c.company_id == request.company_id))
-        conn.execute(companies.delete().where(companies.c.id == request.company_id))
+    clear_company_data(request.company_id)
         
     import os
     model_dir = Path(__file__).resolve().parents[2] / "models"
@@ -717,7 +801,7 @@ def login(request: LoginRequest) -> AuthResponse:
 
 @app.post("/predict", response_model=PredictionResponse, tags=["Prediction"])
 def predict(
-    customer: CustomerFeatures,
+    customer: dict = Body(default_factory=dict),
     session: AuthenticatedUser = Depends(_require_session),
 ) -> PredictionResponse:
     """
@@ -728,7 +812,8 @@ def predict(
     _require_model(session.company_id)
     try:
         p = router.get_predictor(session.company_id)
-        result = p.predict(customer.model_dump())
+        payload = _prediction_payload(customer, session.company_id)
+        result = p.predict(payload)
         response = _build_response(result)
         record_prediction_event(
             username=session.username,
@@ -745,6 +830,8 @@ def predict(
             company_id=session.company_id,
         )
         return response
+    except HTTPException:
+        raise
     except Exception as exc:
         logger.exception("Prediction error")
         raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -772,10 +859,11 @@ def predict_batch(
     p = router.get_predictor(session.company_id)
     for customer in request.customers:
         try:
-            result = p.predict(customer.model_dump())
+            payload = _prediction_payload(customer, session.company_id)
+            result = p.predict(payload)
             predictions.append(_build_response(result))
         except Exception as exc:
-            logger.error("Error on customer %s: %s", customer.customerID, exc)
+            logger.error("Error on customer %s: %s", customer.get("customerID", "UNKNOWN"), exc)
 
     high_risk = sum(1 for p in predictions if p.risk_level == "High")
     for prediction in predictions:

@@ -27,7 +27,9 @@ from sqlalchemy import (
     UniqueConstraint,
     case,
     create_engine,
+    delete,
     func,
+    insert,
     select,
     update,
 )
@@ -140,6 +142,20 @@ company_schemas = Table(
     Column("updated_at", DateTime(timezone=True), nullable=False, default=lambda: _now(), onupdate=lambda: _now()),
 )
 
+model_training_runs = Table(
+    "model_training_runs",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("company_id", String(80), ForeignKey("companies.id"), nullable=False),
+    Column("status", String(40), nullable=False),
+    Column("model_family", String(120), nullable=False, default=""),
+    Column("metrics_json", Text, nullable=False, default="{}"),
+    Column("artifact_paths_json", Text, nullable=False, default="{}"),
+    Column("error_message", Text, nullable=False, default=""),
+    Column("started_at", DateTime(timezone=True), nullable=False, default=lambda: _now()),
+    Column("finished_at", DateTime(timezone=True)),
+)
+
 _ENGINE: Engine | None = None
 _ENGINE_KEY: str | None = None
 
@@ -149,6 +165,8 @@ def _now() -> datetime:
 
 
 def database_url() -> str:
+    if os.getenv("CHURNGUARD_TESTING"):
+        return f"sqlite:///{storage_path()}"
     configured = os.getenv("DATABASE_URL")
     if configured:
         if configured.startswith("postgres://"):
@@ -178,6 +196,15 @@ def engine() -> Engine:
         _ENGINE = create_engine(key, future=True, pool_pre_ping=True)
         _ENGINE_KEY = key
     return _ENGINE
+
+
+def reset_engine() -> None:
+    """Drop the cached SQLAlchemy engine after env-based database changes."""
+    global _ENGINE, _ENGINE_KEY
+    if _ENGINE is not None:
+        _ENGINE.dispose()
+    _ENGINE = None
+    _ENGINE_KEY = None
 
 
 @contextmanager
@@ -479,6 +506,85 @@ def get_company_schema(company_id: str) -> dict | None:
         if row:
             return json.loads(row[0])
     return None
+
+
+def start_training_run(company_id: str, status: str = "running") -> int:
+    init_storage()
+    with _connect() as connection:
+        result = connection.execute(
+            insert(model_training_runs).values(
+                company_id=company_id,
+                status=status,
+                model_family="",
+                metrics_json="{}",
+                artifact_paths_json="{}",
+                error_message="",
+                started_at=_now(),
+            )
+        )
+        return int(result.inserted_primary_key[0])
+
+
+def finish_training_run(
+    run_id: int,
+    *,
+    status: str,
+    model_family: str = "",
+    metrics: dict | None = None,
+    artifact_paths: dict | None = None,
+    error_message: str = "",
+) -> None:
+    init_storage()
+    with _connect() as connection:
+        connection.execute(
+            update(model_training_runs)
+            .where(model_training_runs.c.id == run_id)
+            .values(
+                status=status,
+                model_family=model_family,
+                metrics_json=json.dumps(metrics or {}, default=str, sort_keys=True),
+                artifact_paths_json=json.dumps(artifact_paths or {}, default=str, sort_keys=True),
+                error_message=error_message,
+                finished_at=_now(),
+            )
+        )
+
+
+def latest_training_status(company_id: str | None = None) -> list[dict]:
+    init_storage()
+    with _connect() as connection:
+        query = select(model_training_runs).order_by(model_training_runs.c.started_at.desc())
+        if company_id:
+            query = query.where(model_training_runs.c.company_id == company_id)
+        rows = connection.execute(query.limit(50)).mappings().all()
+
+    statuses = []
+    for row in rows:
+        data = dict(row)
+        for key in ("started_at", "finished_at"):
+            if isinstance(data.get(key), datetime):
+                data[key] = data[key].isoformat()
+        data["metrics"] = json.loads(data.pop("metrics_json") or "{}")
+        data["artifact_paths"] = json.loads(data.pop("artifact_paths_json") or "{}")
+        statuses.append(data)
+    return statuses
+
+
+def clear_company_data(company_id: str) -> None:
+    init_storage()
+    with _connect() as connection:
+        for table in (
+            prediction_events,
+            learning_rows,
+            upload_batches,
+            audit_logs,
+            workspace_members,
+            app_users,
+            company_schemas,
+            model_training_runs,
+        ):
+            connection.execute(delete(table).where(table.c.company_id == company_id))
+        connection.execute(delete(companies).where(companies.c.id == company_id))
 
 
 def admin_summary(

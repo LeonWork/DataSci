@@ -36,6 +36,9 @@ class ChurnPredictor:
         self.pipeline = None
         self.feature_names: list[str] = []
         self.training_metrics: dict = {}
+        self.model_family = ""
+        self.threshold_report: list[dict] = []
+        self.model_comparison: dict = {}
         self._loaded = False
         
         self.model_path = MODELS_DIR / f"{company_id}_model.joblib"
@@ -64,6 +67,9 @@ class ChurnPredictor:
             meta = json.loads(self.meta_path.read_text())
             self.feature_names    = meta.get("feature_names", [])
             self.training_metrics = meta.get("metrics", {})
+            self.model_family = meta.get("model_family", "")
+            self.threshold_report = meta.get("threshold_report", [])
+            self.model_comparison = meta.get("model_comparison", {})
         self._loaded = True
         self.last_mtime = self.model_path.stat().st_mtime
         logger.info("Model loaded ✓ — %d features", len(self.feature_names))
