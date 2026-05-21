@@ -13,12 +13,16 @@
 11. **Retraining Observability**: Added per-company training status records for `running`, `succeeded`, and `failed` model jobs.
 12. **Schema Review UI**: Added an owner-editable schema editor so inferred columns can be corrected before retraining.
 13. **Learning Row Review**: Added queued, approved, and rejected learning-row states with review controls in the Improvement Lab.
-14. **100% Test Suite Pass Rate**: All 146 API, pipeline, and integration tests pass locally with SQLite and no Neon/network dependency.
+14. **Model Promotion Workflow**: Added candidate model artifacts, promotion/rejection API endpoints, and an Improvement Lab review card so retraining no longer has to replace production immediately.
+15. **Used-In-Model Tracking**: Candidate metadata now records included learning row IDs, and promotion marks those approved rows as `used_in_model` with the promoted training run ID.
+16. **Promotion Quality Rules**: Candidate promotion now compares production vs candidate metrics and blocks material regressions unless an owner explicitly force-promotes.
+17. **Drift Monitoring**: Prediction events now store scored input payloads, model metadata stores training profiles, and `/admin/drift` flags stable/watch/high drift with retrain recommendations.
+18. **100% Test Suite Pass Rate**: All API, pipeline, and integration tests pass locally with SQLite and no Neon/network dependency.
 
 # What To Do Next
 
-1. **Model Promotion Workflow**: Separate production and candidate artifacts so retraining can be reviewed before promotion.
-2. **Used-In-Model Tracking**: Mark approved rows as consumed after successful retraining.
-3. **Drift Monitoring**: Add feature drift, prediction distribution drift, label balance, and retrain-recommended indicators.
-4. **Advanced Model Explanations**: Integrate richer SHAP/LIME-style plots directly in the dashboard.
-5. **Tenant Usage Analytics**: Implement billing, usage limits, and API quota tracking for the multi-tenant SaaS subscription model.
+1. **Advanced Model Explanations**: Integrate richer SHAP/LIME-style plots directly in the dashboard.
+2. **Tenant Usage Analytics**: Implement billing, usage limits, and API quota tracking for the multi-tenant SaaS subscription model.
+3. **Durable Model Artifact Storage**: Move production/candidate artifacts to Vercel Blob or object storage before serious external pilots.
+4. **Promotion History UI**: Show past candidate, promoted, rejected, failed, and force-promoted training runs in the Improvement Lab.
+5. **Outcome Performance Drift**: Once companies upload later outcomes, compare predicted risk against actual churn by cohort and time window.

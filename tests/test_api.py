@@ -76,13 +76,14 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setenv("CHURNGUARD_DB_PATH", str(tmp_path / "churnguard-test.sqlite3"))
     
     # Reset engine and clean up DB tables for test isolation
-    from src.api.storage import engine, prediction_events, learning_rows, upload_batches, app_users, workspace_members
+    from src.api.storage import engine, prediction_events, learning_rows, upload_batches, app_users, workspace_members, model_training_runs
     eng = engine()
     try:
         with eng.begin() as conn:
             conn.execute(prediction_events.delete())
             conn.execute(learning_rows.delete())
             conn.execute(upload_batches.delete())
+            conn.execute(model_training_runs.delete())
             conn.execute(app_users.delete())
             conn.execute(workspace_members.delete())
     except Exception:
@@ -486,6 +487,286 @@ class TestAdminSummary:
         run = resp.json()["runs"][0]
         assert run["status"] == "failed"
         assert run["error_message"] == "candidate model failed"
+
+
+class TestModelPromotion:
+    def _write_artifacts(self, model_dir, stem, meta):
+        model_dir.mkdir(parents=True, exist_ok=True)
+        (model_dir / f"{stem}_model.joblib").write_text(f"{stem}-model")
+        (model_dir / f"{stem}_pipeline.joblib").write_text(f"{stem}-pipeline")
+        (model_dir / f"{stem}_model_meta.json").write_text(json.dumps(meta))
+
+    def test_candidate_status_compares_production_and_candidate(self, client, tmp_path, monkeypatch):
+        from src.api.storage import start_training_run, finish_training_run
+
+        monkeypatch.setattr("src.api.main.MODELS_DIR", tmp_path)
+        self._write_artifacts(tmp_path, "default", {
+            "model_family": "RandomForest",
+            "metrics": {"roc_auc": 0.80, "f1": 0.58},
+        })
+        self._write_artifacts(tmp_path, "default_candidate", {
+            "artifact_stage": "candidate",
+            "model_family": "LightGBM_Tuned",
+            "metrics": {"roc_auc": 0.86, "f1": 0.63},
+        })
+        run_id = start_training_run("default", status="running")
+        finish_training_run(
+            run_id,
+            status="candidate_ready",
+            model_family="LightGBM_Tuned",
+            metrics={"roc_auc": 0.86, "f1": 0.63},
+            artifact_paths={"metadata": str(tmp_path / "default_candidate_model_meta.json")},
+        )
+
+        resp = client.get("/admin/model/candidate")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["production"]["metadata"]["model_family"] == "RandomForest"
+        assert body["candidate"]["metadata"]["model_family"] == "LightGBM_Tuned"
+        assert body["candidate"]["can_promote"] is True
+        assert body["candidate"]["quality_gate"]["passed"] is True
+
+    def test_promote_candidate_replaces_production_artifacts(self, client, tmp_path, monkeypatch):
+        from src.api.storage import start_training_run, finish_training_run, latest_training_status
+
+        monkeypatch.setattr("src.api.main.MODELS_DIR", tmp_path)
+        self._write_artifacts(tmp_path, "default", {
+            "model_family": "RandomForest",
+            "metrics": {"roc_auc": 0.80},
+        })
+        self._write_artifacts(tmp_path, "default_candidate", {
+            "artifact_stage": "candidate",
+            "model_family": "LightGBM_Tuned",
+            "metrics": {"roc_auc": 0.86},
+        })
+        run_id = start_training_run("default", status="running")
+        finish_training_run(
+            run_id,
+            status="candidate_ready",
+            model_family="LightGBM_Tuned",
+            metrics={"roc_auc": 0.86},
+        )
+
+        resp = client.post("/admin/model/promote", json={})
+
+        assert resp.status_code == 200
+        assert json.loads((tmp_path / "default_model_meta.json").read_text())["model_family"] == "LightGBM_Tuned"
+        assert (tmp_path / "default_model.joblib").read_text() == "default_candidate-model"
+        statuses = latest_training_status("default")
+        assert statuses[0]["status"] == "promoted"
+
+    def test_worse_candidate_is_blocked_by_quality_gate(self, client, tmp_path, monkeypatch):
+        from src.api.storage import start_training_run, finish_training_run, latest_training_status
+
+        monkeypatch.setattr("src.api.main.MODELS_DIR", tmp_path)
+        self._write_artifacts(tmp_path, "default", {
+            "model_family": "RandomForest",
+            "metrics": {"roc_auc": 0.86, "pr_auc": 0.62, "f1": 0.61, "brier": 0.14},
+        })
+        self._write_artifacts(tmp_path, "default_candidate", {
+            "artifact_stage": "candidate",
+            "model_family": "WeakCandidate",
+            "metrics": {"roc_auc": 0.78, "pr_auc": 0.50, "f1": 0.52, "brier": 0.19},
+        })
+        run_id = start_training_run("default", status="running")
+        finish_training_run(run_id, status="candidate_ready", model_family="WeakCandidate")
+
+        resp = client.post("/admin/model/promote", json={})
+
+        assert resp.status_code == 409
+        detail = resp.json()["detail"]
+        assert detail["quality_gate"]["passed"] is False
+        assert detail["quality_gate"]["blockers"]
+        assert json.loads((tmp_path / "default_model_meta.json").read_text())["model_family"] == "RandomForest"
+        assert latest_training_status("default")[0]["status"] == "candidate_ready"
+
+    def test_owner_can_force_promote_blocked_candidate(self, client, tmp_path, monkeypatch):
+        from src.api.storage import start_training_run, finish_training_run, latest_training_status
+
+        monkeypatch.setattr("src.api.main.MODELS_DIR", tmp_path)
+        self._write_artifacts(tmp_path, "default", {
+            "model_family": "RandomForest",
+            "metrics": {"roc_auc": 0.86, "pr_auc": 0.62, "f1": 0.61, "brier": 0.14},
+        })
+        self._write_artifacts(tmp_path, "default_candidate", {
+            "artifact_stage": "candidate",
+            "model_family": "BusinessOverrideCandidate",
+            "metrics": {"roc_auc": 0.78, "pr_auc": 0.50, "f1": 0.52, "brier": 0.19},
+        })
+        run_id = start_training_run("default", status="running")
+        finish_training_run(run_id, status="candidate_ready", model_family="BusinessOverrideCandidate")
+
+        resp = client.post("/admin/model/promote", json={"force": True})
+
+        assert resp.status_code == 200
+        assert resp.json()["forced"] is True
+        assert resp.json()["quality_gate"]["passed"] is False
+        assert json.loads((tmp_path / "default_model_meta.json").read_text())["model_family"] == "BusinessOverrideCandidate"
+        assert latest_training_status("default")[0]["status"] == "promoted"
+
+    def test_promote_candidate_marks_included_learning_rows_used(self, client, tmp_path, monkeypatch):
+        from src.api.storage import (
+            finish_training_run,
+            latest_training_status,
+            list_learning_rows,
+            record_learning_rows,
+            record_upload_batch,
+            start_training_run,
+            update_learning_row_statuses,
+        )
+
+        monkeypatch.setattr("src.api.main.MODELS_DIR", tmp_path)
+        batch_id = record_upload_batch(
+            username="admin",
+            source_file="learning.csv",
+            upload_type="learning",
+            row_count=2,
+            accepted_rows=2,
+            company_id="default",
+        )
+        record_learning_rows(
+            batch_id=batch_id,
+            company_id="default",
+            rows=[
+                {**SAMPLE_CUSTOMER, "customerID": "USED-001", "Churn": "Yes"},
+                {**SAMPLE_CUSTOMER, "customerID": "FUTURE-001", "Churn": "No"},
+            ],
+        )
+        row_ids = [row["id"] for row in list_learning_rows(company_id="default", status="queued")]
+        update_learning_row_statuses(
+            company_id="default",
+            row_ids=row_ids,
+            status="approved_for_training",
+        )
+        included_row_id = row_ids[0]
+
+        self._write_artifacts(tmp_path, "default", {
+            "model_family": "RandomForest",
+            "metrics": {"roc_auc": 0.80},
+        })
+        self._write_artifacts(tmp_path, "default_candidate", {
+            "artifact_stage": "candidate",
+            "model_family": "LightGBM_Tuned",
+            "metrics": {"roc_auc": 0.86},
+            "learning_row_ids": [included_row_id],
+        })
+        run_id = start_training_run("default", status="running")
+        finish_training_run(run_id, status="candidate_ready", model_family="LightGBM_Tuned")
+
+        resp = client.post("/admin/model/promote", json={})
+
+        assert resp.status_code == 200
+        assert resp.json()["used_learning_rows"] == 1
+        used_rows = list_learning_rows(company_id="default", status="used_in_model")
+        approved_rows = list_learning_rows(company_id="default", status="approved_for_training")
+        assert [row["id"] for row in used_rows] == [included_row_id]
+        assert used_rows[0]["model_training_run_id"] == latest_training_status("default")[0]["id"]
+        assert len(approved_rows) == 1
+
+    def test_reject_candidate_leaves_production_artifacts_untouched(self, client, tmp_path, monkeypatch):
+        from src.api.storage import start_training_run, finish_training_run, latest_training_status
+
+        monkeypatch.setattr("src.api.main.MODELS_DIR", tmp_path)
+        self._write_artifacts(tmp_path, "default", {
+            "model_family": "RandomForest",
+            "metrics": {"roc_auc": 0.80},
+        })
+        self._write_artifacts(tmp_path, "default_candidate", {
+            "artifact_stage": "candidate",
+            "model_family": "LightGBM_Tuned",
+            "metrics": {"roc_auc": 0.86},
+        })
+        run_id = start_training_run("default", status="running")
+        finish_training_run(run_id, status="candidate_ready", model_family="LightGBM_Tuned")
+
+        resp = client.post("/admin/model/reject", json={})
+
+        assert resp.status_code == 200
+        assert json.loads((tmp_path / "default_model_meta.json").read_text())["model_family"] == "RandomForest"
+        assert not (tmp_path / "default_candidate_model.joblib").exists()
+        statuses = latest_training_status("default")
+        assert statuses[0]["status"] == "rejected"
+
+    def test_non_owner_cannot_promote_candidate(self, client):
+        token = create_session_token_for_user({
+            "username": "viewer",
+            "email": "viewer@example.com",
+            "company_id": "default",
+            "role": "viewer",
+        })
+        client.headers.update({"Authorization": f"Bearer {token}"})
+
+        resp = client.post("/admin/model/promote", json={})
+
+        assert resp.status_code == 403
+
+
+class TestDriftMonitoring:
+    def _write_profile_meta(self, model_dir, profile):
+        model_dir.mkdir(parents=True, exist_ok=True)
+        (model_dir / "default_model_meta.json").write_text(json.dumps({
+            "model_family": "RandomForest",
+            "metrics": {"roc_auc": 0.84},
+            "training_profile": profile,
+        }))
+
+    def test_drift_monitor_warms_up_before_enough_predictions(self, client, tmp_path, monkeypatch):
+        monkeypatch.setattr("src.api.main.MODELS_DIR", tmp_path)
+        self._write_profile_meta(tmp_path, {
+            "numeric": {"tenure": {"mean": 10, "std": 2}},
+            "categorical": {"Contract": {"top_values": {"Month-to-month": 0.5, "Two year": 0.5}}},
+        })
+
+        resp = client.get("/admin/drift")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "warming_up"
+        assert body["sample_size"] == 0
+
+    def test_drift_monitor_detects_shifted_recent_inputs(self, client, tmp_path, monkeypatch):
+        monkeypatch.setattr("src.api.main.MODELS_DIR", tmp_path)
+        self._write_profile_meta(tmp_path, {
+            "numeric": {
+                "tenure": {"mean": 5, "std": 1},
+                "MonthlyCharges": {"mean": 50, "std": 10},
+            },
+            "categorical": {
+                "Contract": {"top_values": {"Two year": 0.9, "Month-to-month": 0.1}},
+            },
+        })
+        shifted = {
+            **SAMPLE_CUSTOMER,
+            "tenure": 30,
+            "MonthlyCharges": 120,
+            "Contract": "Month-to-month",
+        }
+        for index in range(10):
+            payload = {**shifted, "customerID": f"DRIFT-{index}"}
+            assert client.post("/predict", json=payload).status_code == 200
+
+        resp = client.get("/admin/drift")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "high"
+        assert body["retrain_recommended"] is True
+        assert body["sample_size"] == 10
+        assert body["features"][0]["score"] >= 0.75
+
+    def test_drift_monitor_reports_missing_training_profile(self, client, tmp_path, monkeypatch):
+        monkeypatch.setattr("src.api.main.MODELS_DIR", tmp_path)
+        tmp_path.mkdir(parents=True, exist_ok=True)
+        (tmp_path / "default_model_meta.json").write_text(json.dumps({
+            "model_family": "RandomForest",
+            "metrics": {"roc_auc": 0.84},
+        }))
+
+        resp = client.get("/admin/drift")
+
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "unavailable"
 
 
 class TestLearningQueue:

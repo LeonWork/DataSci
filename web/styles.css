@@ -1151,6 +1151,223 @@ select {
   letter-spacing: 0.04em;
 }
 
+.promotion-panel {
+  display: grid;
+  gap: 0.8rem;
+  margin-top: 0.9rem;
+}
+
+.promotion-empty {
+  display: grid;
+  gap: 0.25rem;
+  padding: 0.85rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f8fafc;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.promotion-empty strong {
+  color: var(--ink);
+}
+
+.promotion-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.65rem;
+}
+
+.promotion-summary > div {
+  display: grid;
+  gap: 0.22rem;
+  padding: 0.75rem;
+  background: #f8fafc;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.promotion-summary span {
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.promotion-summary strong {
+  color: var(--ink);
+  font-size: 0.92rem;
+}
+
+.promotion-metrics table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.83rem;
+}
+
+.promotion-metrics th,
+.promotion-metrics td {
+  padding: 0.55rem 0.6rem;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+}
+
+.promotion-metrics th {
+  color: var(--muted);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+}
+
+.promotion-delta {
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.promotion-delta.good {
+  color: var(--green);
+}
+
+.promotion-delta.bad {
+  color: var(--red);
+}
+
+.quality-gate {
+  display: grid;
+  gap: 0.3rem;
+  padding: 0.75rem 0.85rem;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  font-size: 0.84rem;
+}
+
+.quality-gate strong {
+  color: var(--ink);
+}
+
+.quality-gate span {
+  color: var(--muted);
+}
+
+.quality-gate ul {
+  margin: 0.25rem 0 0;
+  padding-left: 1.1rem;
+  color: var(--muted);
+}
+
+.quality-gate--pass {
+  background: #f0fdf4;
+  border-color: #bbf7d0;
+}
+
+.quality-gate--block {
+  background: #fff7ed;
+  border-color: #fed7aa;
+}
+
+.drift-monitor {
+  display: grid;
+  gap: 0.8rem;
+  margin-top: 0.9rem;
+}
+
+.drift-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.65rem;
+}
+
+.drift-summary > div {
+  display: grid;
+  gap: 0.22rem;
+  padding: 0.75rem;
+  background: #f8fafc;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.drift-summary span {
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.drift-summary strong {
+  color: var(--ink);
+  font-size: 0.96rem;
+}
+
+.drift-summary--high > div {
+  background: #fef2f2;
+  border-color: #fecaca;
+}
+
+.drift-summary--watch > div {
+  background: #fff7ed;
+  border-color: #fed7aa;
+}
+
+.drift-summary--stable > div {
+  background: #f0fdf4;
+  border-color: #bbf7d0;
+}
+
+.drift-message {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+.drift-feature-list {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.drift-feature {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.drift-feature div {
+  display: grid;
+  gap: 0.16rem;
+  min-width: 0;
+}
+
+.drift-feature strong {
+  color: var(--ink);
+  font-size: 0.9rem;
+}
+
+.drift-feature span {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.drift-score {
+  flex: 0 0 auto;
+  font-weight: 900;
+  color: var(--muted);
+}
+
+.drift-score--high {
+  color: var(--red);
+}
+
+.drift-score--watch {
+  color: var(--amber);
+}
+
+.drift-score--stable {
+  color: var(--green);
+}
+
 /* ── Lab Metrics Grid ───────────────────────────────────────────── */
 .lab-metrics-grid {
   display: grid;

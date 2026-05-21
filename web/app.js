@@ -59,6 +59,11 @@ const schemaCategorical = document.querySelector("#schemaCategorical");
 const schemaEditorMessage = document.querySelector("#schemaEditorMessage");
 const learningReviewSummary = document.querySelector("#learningReviewSummary");
 const learningReviewTable = document.querySelector("#learningReviewTable");
+const modelPromotionPanel = document.querySelector("#modelPromotionPanel");
+const modelPromotionMessage = document.querySelector("#modelPromotionMessage");
+const trainModelCandidate = document.querySelector("#trainModelCandidate");
+const promoteModelCandidate = document.querySelector("#promoteModelCandidate");
+const rejectModelCandidate = document.querySelector("#rejectModelCandidate");
 let lastCustomer = null;
 let lastPrediction = null;
 let lastBatchRows = [];
@@ -189,7 +194,9 @@ async function postJson(url, body) {
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
     if (response.status === 401) clearSession();
-    throw new Error(formatApiError(data.detail, "Request failed."));
+    const error = new Error(formatApiError(data.detail, "Request failed."));
+    error.detail = data.detail;
+    throw error;
   }
   return data;
 }
@@ -806,7 +813,9 @@ document.querySelector(".lab-tabs")?.addEventListener("click", (e) => {
 async function loadLabData() {
   loadLabSchema();
   loadLabMetrics();
+  loadDriftMonitor();
   loadLearningReview();
+  loadModelPromotion();
 }
 
 async function loadLabSchema() {
@@ -902,7 +911,7 @@ async function loadLearningReview() {
     });
     const counts = data.counts || {};
     const rows = data.rows || [];
-    learningReviewSummary.textContent = `${counts.queued || 0} queued · ${counts.approved_for_training || 0} approved · ${counts.rejected || 0} rejected`;
+    learningReviewSummary.textContent = `${counts.queued || 0} queued · ${counts.approved_for_training || 0} approved · ${counts.used_in_model || 0} used · ${counts.rejected || 0} rejected`;
     if (!rows.length) {
       learningReviewTable.innerHTML = '<p style="color:var(--muted);font-size:14px;">No queued learning rows need review.</p>';
       return;
@@ -987,6 +996,163 @@ async function loadLabMetrics() {
       if (heroPreds) heroPreds.textContent = summary.total_predictions?.toLocaleString() || "0";
     }
   } catch {}
+}
+
+function driftStatusLabel(status) {
+  if (status === "high") return "High drift";
+  if (status === "watch") return "Watch";
+  if (status === "stable") return "Stable";
+  if (status === "warming_up") return "Warming up";
+  return "Unavailable";
+}
+
+async function loadDriftMonitor() {
+  const container = document.getElementById("labDriftMonitor");
+  if (!container) return;
+  try {
+    const response = await fetch("/admin/drift", { headers: authHeaders() });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(formatApiError(data.detail, "Could not load drift status."));
+
+    const features = data.features || [];
+    const score = typeof data.overall_score === "number" ? `${Math.round(data.overall_score * 100)}%` : "--";
+    container.innerHTML = `
+      <div class="drift-summary drift-summary--${data.status}">
+        <div>
+          <span>Status</span>
+          <strong>${driftStatusLabel(data.status)}</strong>
+        </div>
+        <div>
+          <span>Drift score</span>
+          <strong>${score}</strong>
+        </div>
+        <div>
+          <span>Recent predictions</span>
+          <strong>${data.sample_size || 0}</strong>
+        </div>
+      </div>
+      <p class="drift-message">${data.message || ""}</p>
+      ${features.length ? `
+        <div class="drift-feature-list">
+          ${features.slice(0, 6).map((item) => `
+            <div class="drift-feature">
+              <div>
+                <strong>${item.feature}</strong>
+                <span>${item.type} · ${item.detail}</span>
+              </div>
+              <span class="drift-score drift-score--${item.status}">${Math.round(item.score * 100)}%</span>
+            </div>
+          `).join("")}
+        </div>
+      ` : ""}
+    `;
+  } catch (error) {
+    container.innerHTML = `<p style="color:var(--red);font-size:14px;">${error.message}</p>`;
+  }
+}
+
+function metricValue(metrics, key) {
+  const value = metrics?.[key];
+  if (typeof value !== "number") return "--";
+  return value <= 1 ? (value * 100).toFixed(1) + "%" : value.toFixed(3);
+}
+
+function metricDelta(candidateMetrics, productionMetrics, key) {
+  const candidate = candidateMetrics?.[key];
+  const production = productionMetrics?.[key];
+  if (typeof candidate !== "number" || typeof production !== "number") return "";
+  const delta = candidate - production;
+  const good = key === "brier" ? delta < 0 : delta > 0;
+  const neutral = Math.abs(delta) < 0.0001;
+  const cls = neutral ? "promotion-delta" : `promotion-delta ${good ? "good" : "bad"}`;
+  const formatted = Math.abs(delta) <= 1 ? (delta * 100).toFixed(1) + " pts" : delta.toFixed(3);
+  return `<span class="${cls}">${delta >= 0 ? "+" : ""}${formatted}</span>`;
+}
+
+function renderQualityGate(gate) {
+  if (!gate) return "";
+  const passed = Boolean(gate.passed);
+  const blockers = gate.blockers || [];
+  const warnings = gate.warnings || [];
+  const score = typeof gate.score_delta === "number"
+    ? `${gate.score_delta >= 0 ? "+" : ""}${(gate.score_delta * 100).toFixed(1)} pts balanced score`
+    : "No balanced-score comparison";
+  return `
+    <div class="quality-gate ${passed ? "quality-gate--pass" : "quality-gate--block"}">
+      <strong>${passed ? "Quality gate passed" : "Quality gate blocked promotion"}</strong>
+      <span>${score}</span>
+      ${blockers.length ? `<ul>${blockers.map((item) => `<li>${item}</li>`).join("")}</ul>` : ""}
+      ${warnings.length ? `<ul>${warnings.map((item) => `<li>${item}</li>`).join("")}</ul>` : ""}
+    </div>
+  `;
+}
+
+async function loadModelPromotion() {
+  if (!modelPromotionPanel) return;
+  try {
+    const response = await fetch("/admin/model/candidate", { headers: authHeaders() });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(formatApiError(data.detail, "Could not load model promotion status."));
+
+    const production = data.production?.metadata || {};
+    const candidate = data.candidate?.metadata || {};
+    const productionMetrics = production.metrics || {};
+    const candidateMetrics = candidate.metrics || {};
+    const run = data.candidate?.run;
+    const canPromote = Boolean(data.candidate?.can_promote);
+    const qualityGate = data.candidate?.quality_gate;
+    const metrics = ["roc_auc", "pr_auc", "f1", "precision", "recall", "brier"];
+
+    promoteModelCandidate.disabled = !canPromote;
+    rejectModelCandidate.disabled = !run;
+
+    if (!run && !data.candidate?.exists) {
+      modelPromotionPanel.innerHTML = `
+        <div class="promotion-empty">
+          <strong>No candidate model yet</strong>
+          <span>Run retraining after approving learning rows. The live production model will keep serving while the candidate trains.</span>
+        </div>
+      `;
+      return;
+    }
+
+    modelPromotionPanel.innerHTML = `
+      <div class="promotion-summary">
+        <div>
+          <span>Production</span>
+          <strong>${production.model_family || "Current model"}</strong>
+        </div>
+        <div>
+          <span>Candidate</span>
+          <strong>${candidate.model_family || run?.model_family || "Candidate model"}</strong>
+        </div>
+        <div>
+          <span>Status</span>
+          <strong>${run?.status || "artifact found"}</strong>
+        </div>
+      </div>
+      <div class="promotion-metrics">
+        <table>
+          <thead><tr><th>Metric</th><th>Production</th><th>Candidate</th><th>Delta</th></tr></thead>
+          <tbody>
+            ${metrics.map((key) => `
+              <tr>
+                <td>${key.replace("_", " ").toUpperCase()}</td>
+                <td>${metricValue(productionMetrics, key)}</td>
+                <td>${metricValue(candidateMetrics, key)}</td>
+                <td>${metricDelta(candidateMetrics, productionMetrics, key)}</td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+      </div>
+      ${renderQualityGate(qualityGate)}
+    `;
+  } catch (error) {
+    modelPromotionPanel.innerHTML = `<p style="color:var(--red);font-size:14px;">${error.message}</p>`;
+    if (promoteModelCandidate) promoteModelCandidate.disabled = true;
+    if (rejectModelCandidate) rejectModelCandidate.disabled = true;
+  }
 }
 
 // ── Lab Learning CSV Upload ────────────────────────────────────────
@@ -1077,6 +1243,7 @@ profileForm.addEventListener("submit", async (event) => {
     const prediction = await postJson("/predict", customer);
     renderPrediction(customer, prediction);
     await loadAdminSummary();
+    await loadDriftMonitor();
   } catch (error) {
     emptyState.classList.remove("hidden");
     results.classList.add("hidden");
@@ -1094,6 +1261,7 @@ batchCsv.addEventListener("change", async () => {
     const data = await postFile("/predict-csv", file);
     renderBatchResults(data);
     await loadAdminSummary();
+    await loadDriftMonitor();
   } catch (error) {
     renderValidationErrors(batchSummary, error.detail || error.message);
   }
@@ -1155,6 +1323,7 @@ document.getElementById("adminRetrainAll")?.addEventListener("click", async () =
       msg.textContent = `✅ ${data.message} Run #${data.run_id || ""}`;
       msg.style.color = "var(--green)";
     }
+    loadModelPromotion();
   } catch (error) {
     if (msg) {
       msg.textContent = "❌ " + error.message;
@@ -1169,6 +1338,88 @@ document.getElementById("approveLearningRows")?.addEventListener("click", () => 
 });
 document.getElementById("rejectLearningRows")?.addEventListener("click", () => {
   reviewSelectedLearningRows("rejected");
+});
+
+trainModelCandidate?.addEventListener("click", async () => {
+  if (modelPromotionMessage) {
+    modelPromotionMessage.textContent = "Starting candidate training...";
+    modelPromotionMessage.style.color = "inherit";
+  }
+  try {
+    const data = await postJson("/admin/retrain", {});
+    if (modelPromotionMessage) {
+      modelPromotionMessage.textContent = `${data.message} Run #${data.run_id || ""}`;
+      modelPromotionMessage.style.color = "var(--green)";
+    }
+    await loadModelPromotion();
+  } catch (error) {
+    if (modelPromotionMessage) {
+      modelPromotionMessage.textContent = error.message;
+      modelPromotionMessage.style.color = "var(--red)";
+    }
+  }
+});
+
+promoteModelCandidate?.addEventListener("click", async () => {
+  if (modelPromotionMessage) {
+    modelPromotionMessage.textContent = "Promoting candidate...";
+    modelPromotionMessage.style.color = "inherit";
+  }
+  try {
+    const data = await postJson("/admin/model/promote", {});
+    if (modelPromotionMessage) {
+      modelPromotionMessage.textContent = `Candidate promoted from run #${data.run_id}. ${data.used_learning_rows || 0} learning rows marked used.`;
+      modelPromotionMessage.style.color = "var(--green)";
+    }
+    await loadModelInfo();
+    await loadLabMetrics();
+    await loadModelPromotion();
+  } catch (error) {
+    const gate = error.detail?.quality_gate;
+    if (gate && confirm("This candidate failed quality checks. Promote it anyway?")) {
+      try {
+        const forced = await postJson("/admin/model/promote", { force: true });
+        if (modelPromotionMessage) {
+          modelPromotionMessage.textContent = `Candidate force-promoted from run #${forced.run_id}. ${forced.used_learning_rows || 0} learning rows marked used.`;
+          modelPromotionMessage.style.color = "var(--amber)";
+        }
+        await loadModelInfo();
+        await loadLabMetrics();
+        await loadModelPromotion();
+        return;
+      } catch (forcedError) {
+        if (modelPromotionMessage) {
+          modelPromotionMessage.textContent = forcedError.message;
+          modelPromotionMessage.style.color = "var(--red)";
+        }
+        return;
+      }
+    }
+    if (modelPromotionMessage) {
+      modelPromotionMessage.textContent = error.message;
+      modelPromotionMessage.style.color = "var(--red)";
+    }
+  }
+});
+
+rejectModelCandidate?.addEventListener("click", async () => {
+  if (modelPromotionMessage) {
+    modelPromotionMessage.textContent = "Rejecting candidate...";
+    modelPromotionMessage.style.color = "inherit";
+  }
+  try {
+    const data = await postJson("/admin/model/reject", {});
+    if (modelPromotionMessage) {
+      modelPromotionMessage.textContent = `Candidate rejected from run #${data.run_id}.`;
+      modelPromotionMessage.style.color = "var(--green)";
+    }
+    await loadModelPromotion();
+  } catch (error) {
+    if (modelPromotionMessage) {
+      modelPromotionMessage.textContent = error.message;
+      modelPromotionMessage.style.color = "var(--red)";
+    }
+  }
 });
 
 document.body.addEventListener("click", (e) => {

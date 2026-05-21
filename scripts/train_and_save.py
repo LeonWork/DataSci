@@ -127,6 +127,37 @@ def _balanced_score(metrics: dict) -> float:
     )
 
 
+def _training_profile(X: pd.DataFrame, num_cols: list[str], cat_cols: list[str]) -> dict:
+    numeric = {}
+    for col in num_cols:
+        if col not in X.columns:
+            continue
+        values = pd.to_numeric(X[col], errors="coerce").dropna()
+        if values.empty:
+            continue
+        numeric[col] = {
+            "mean": float(values.mean()),
+            "std": float(values.std(ddof=0) or 0),
+            "missing_rate": float(pd.to_numeric(X[col], errors="coerce").isna().mean()),
+        }
+
+    categorical = {}
+    for col in cat_cols:
+        if col not in X.columns:
+            continue
+        values = X[col].fillna("Unknown").astype(str)
+        normalized = values.value_counts(normalize=True).head(20)
+        categorical[col] = {
+            "top_values": {str(k): float(v) for k, v in normalized.items()},
+            "missing_rate": float(X[col].isna().mean()),
+        }
+    return {
+        "row_count": int(len(X)),
+        "numeric": numeric,
+        "categorical": categorical,
+    }
+
+
 def _tune_lightgbm(X_train, y_train, X_test, y_test, n_trials: int = 20) -> dict:
     def objective(trial):
         params = {
@@ -172,6 +203,7 @@ def _tune_lightgbm(X_train, y_train, X_test, y_test, n_trials: int = 20) -> dict
 def load_training_data(company_id: str = "global") -> pd.DataFrame:
     datasets = []
     df_reference = None
+    learning_row_ids = []
     
     if company_id == "global":
         df_raw = load_raw()
@@ -199,26 +231,27 @@ def load_training_data(company_id: str = "global") -> pd.DataFrame:
         
     try:
         with engine().connect() as conn:
-            query = select(learning_rows.c.row_json).where(
+            query = select(learning_rows.c.id, learning_rows.c.row_json).where(
                 learning_rows.c.status == "approved_for_training"
             )
             if company_id != "global":
                 query = query.where(learning_rows.c.company_id == company_id)
             rows = conn.execute(query).fetchall()
             if not rows:
-                legacy_query = select(learning_rows.c.row_json).where(learning_rows.c.status == "queued")
+                legacy_query = select(learning_rows.c.id, learning_rows.c.row_json).where(learning_rows.c.status == "queued")
                 if company_id != "global":
                     legacy_query = legacy_query.where(learning_rows.c.company_id == company_id)
                 rows = conn.execute(legacy_query).fetchall()
         if rows:
             db_records = []
             for r in rows:
-                rec = json.loads(r[0])
+                rec = json.loads(r[1])
                 if company_id == "global":
                     # Filter out incompatible schemas (e.g. E-Commerce) by ensuring core columns are present
                     if not all(col in rec for col in ["tenure", "MonthlyCharges", "Contract"]):
                         continue
                 db_records.append(rec)
+                learning_row_ids.append(int(r[0]))
             
             if db_records:
                 db_feedback = pd.DataFrame(db_records)
@@ -232,7 +265,9 @@ def load_training_data(company_id: str = "global") -> pd.DataFrame:
         logger.warning("Could not fetch database learning rows: %s", e)
 
     logger.info("Training sources: %s", ", ".join(name for name, _ in datasets))
-    return pd.concat([df for _, df in datasets], ignore_index=True)
+    result = pd.concat([df for _, df in datasets], ignore_index=True)
+    result.attrs["learning_row_ids"] = learning_row_ids
+    return result
 
 
 def _align_training_columns(df: pd.DataFrame, reference: pd.DataFrame, source_prefix: str) -> pd.DataFrame:
@@ -278,7 +313,16 @@ def _normalize_external_columns(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def train_for_company(company_id: str) -> dict:
+def _artifact_paths(company_id: str, *, candidate: bool) -> tuple[Path, Path, Path]:
+    stem = f"{company_id}_candidate" if candidate else company_id
+    return (
+        MODELS_DIR / f"{stem}_model.joblib",
+        MODELS_DIR / f"{stem}_pipeline.joblib",
+        MODELS_DIR / f"{stem}_model_meta.json",
+    )
+
+
+def train_for_company(company_id: str, *, candidate: bool = False) -> dict:
     run_id = start_training_run(company_id, status="running")
     logger.info("Loading raw data for %s …", company_id)
     try:
@@ -375,14 +419,15 @@ def train_for_company(company_id: str) -> dict:
         except Exception:
             feature_names = [f"f{i}" for i in range(X_train_t.shape[1])]
 
-        model_path = MODELS_DIR / f"{company_id}_model.joblib"
-        pipeline_path = MODELS_DIR / f"{company_id}_pipeline.joblib"
-        meta_path = MODELS_DIR / f"{company_id}_model_meta.json"
+        model_path, pipeline_path, meta_path = _artifact_paths(company_id, candidate=candidate)
 
         joblib.dump(model, model_path)
         joblib.dump(pipe, pipeline_path)
         meta = {
             "company_id": company_id,
+            "artifact_stage": "candidate" if candidate else "production",
+            "training_run_id": run_id,
+            "learning_row_ids": list(df_raw.attrs.get("learning_row_ids", [])),
             "feature_names": feature_names,
             "metrics": metrics,
             "num_features": num_cols,
@@ -391,11 +436,12 @@ def train_for_company(company_id: str) -> dict:
             "model_comparison": comparison,
             "threshold_report": thresholds,
             "selection_metric": "balanced_score",
+            "training_profile": _training_profile(X, num_cols, cat_cols),
         }
         meta_path.write_text(json.dumps(meta, indent=2))
         finish_training_run(
             run_id,
-            status="succeeded",
+            status="candidate_ready" if candidate else "succeeded",
             model_family=best_model_name,
             metrics=metrics,
             artifact_paths={
@@ -420,7 +466,9 @@ def train_for_company(company_id: str) -> dict:
 
 def main() -> None:
     init_storage()
-    cid = sys.argv[1] if len(sys.argv) > 1 else "global"
+    candidate = "--candidate" in sys.argv
+    args = [arg for arg in sys.argv[1:] if arg != "--candidate"]
+    cid = args[0] if args else "global"
     
     if cid == "all":
         companies_list = []
@@ -436,21 +484,39 @@ def main() -> None:
         for comp_id in companies_list:
             logger.info("--- Training for %s ---", comp_id)
             try:
-                train_for_company(comp_id)
+                train_for_company(comp_id, candidate=candidate)
             except ValueError as e:
                 if "No objects to concatenate" in str(e):
                     # No training data for this company — copy global model as fallback
                     import shutil
+                    fallback_paths = {}
                     for suffix in ["_model.joblib", "_pipeline.joblib", "_model_meta.json"]:
                         src = MODELS_DIR / f"global{suffix}"
-                        dst = MODELS_DIR / f"{comp_id}{suffix}"
+                        if candidate:
+                            dst = MODELS_DIR / f"{comp_id}_candidate{suffix}"
+                        else:
+                            dst = MODELS_DIR / f"{comp_id}{suffix}"
                         if src.exists():
                             shutil.copy2(src, dst)
+                            key = "metadata" if suffix == "_model_meta.json" else suffix.strip("_").replace(".joblib", "")
+                            fallback_paths[key] = str(dst)
+                    fallback_run_id = start_training_run(comp_id, status="running")
+                    fallback_meta = {}
+                    global_meta = MODELS_DIR / "global_model_meta.json"
+                    if global_meta.exists():
+                        fallback_meta = json.loads(global_meta.read_text())
+                    finish_training_run(
+                        fallback_run_id,
+                        status="candidate_ready" if candidate else "succeeded",
+                        model_family=fallback_meta.get("model_family", "global_fallback"),
+                        metrics=fallback_meta.get("metrics", {}),
+                        artifact_paths=fallback_paths,
+                    )
                     logger.info("No tenant data found — copied global model for %s", comp_id)
                 else:
                     raise
     else:
-        train_for_company(cid)
+        train_for_company(cid, candidate=candidate)
 
 
 if __name__ == "__main__":

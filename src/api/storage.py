@@ -30,7 +30,9 @@ from sqlalchemy import (
     delete,
     func,
     insert,
+    inspect,
     select,
+    text,
     update,
 )
 from sqlalchemy.exc import IntegrityError
@@ -92,6 +94,7 @@ prediction_events = Table(
     Column("churn_probability", Float, nullable=False),
     Column("risk_level", String(40), nullable=False),
     Column("model_version", String(80), nullable=False),
+    Column("input_json", Text, nullable=False, default="{}"),
     Column("created_at", DateTime(timezone=True), nullable=False, default=lambda: _now()),
 )
 
@@ -119,6 +122,8 @@ learning_rows = Table(
     Column("churn", String(20), nullable=False),
     Column("status", String(60), nullable=False, default="queued"),
     Column("row_json", Text, nullable=False),
+    Column("model_training_run_id", Integer, nullable=True),
+    Column("used_in_model_at", DateTime(timezone=True), nullable=True),
     Column("created_at", DateTime(timezone=True), nullable=False, default=lambda: _now()),
 )
 
@@ -215,7 +220,32 @@ def _connect():
 
 def init_storage() -> None:
     metadata.create_all(engine())
+    _ensure_learning_row_tracking_columns()
+    _ensure_prediction_input_column()
     ensure_company(DEFAULT_COMPANY_ID, DEFAULT_COMPANY_NAME)
+
+
+def _ensure_learning_row_tracking_columns() -> None:
+    """Add lightweight tracking columns for existing SQLite/Postgres databases."""
+    existing_columns = {column["name"] for column in inspect(engine()).get_columns("learning_rows")}
+    statements = []
+    if "model_training_run_id" not in existing_columns:
+        statements.append("ALTER TABLE learning_rows ADD COLUMN model_training_run_id INTEGER")
+    if "used_in_model_at" not in existing_columns:
+        statements.append("ALTER TABLE learning_rows ADD COLUMN used_in_model_at TIMESTAMP")
+    if not statements:
+        return
+    with _connect() as connection:
+        for statement in statements:
+            connection.execute(text(statement))
+
+
+def _ensure_prediction_input_column() -> None:
+    existing_columns = {column["name"] for column in inspect(engine()).get_columns("prediction_events")}
+    if "input_json" in existing_columns:
+        return
+    with _connect() as connection:
+        connection.execute(text("ALTER TABLE prediction_events ADD COLUMN input_json TEXT DEFAULT '{}' NOT NULL"))
 
 
 def ensure_company(company_id: str, name: str | None = None) -> None:
@@ -392,6 +422,7 @@ def record_prediction_event(
     churn_probability: float,
     risk_level: str,
     model_version: str,
+    input_payload: dict | None = None,
     company_id: str = DEFAULT_COMPANY_ID,
 ) -> None:
     init_storage()
@@ -404,6 +435,7 @@ def record_prediction_event(
                 churn_probability=churn_probability,
                 risk_level=risk_level,
                 model_version=model_version,
+                input_json=json.dumps(input_payload or {}, default=str, sort_keys=True),
                 created_at=_now(),
             )
         )
@@ -528,6 +560,58 @@ def update_learning_row_statuses(
         return int(result.rowcount or 0)
 
 
+def mark_learning_rows_used_in_model(
+    *,
+    company_id: str,
+    row_ids: Iterable[int],
+    training_run_id: int,
+) -> int:
+    init_storage()
+    ids = [int(row_id) for row_id in row_ids]
+    if not ids:
+        return 0
+    with _connect() as connection:
+        result = connection.execute(
+            update(learning_rows)
+            .where(
+                learning_rows.c.company_id == company_id,
+                learning_rows.c.id.in_(ids),
+                learning_rows.c.status == "approved_for_training",
+            )
+            .values(
+                status="used_in_model",
+                model_training_run_id=training_run_id,
+                used_in_model_at=_now(),
+            )
+        )
+        return int(result.rowcount or 0)
+
+
+def recent_prediction_inputs(
+    *,
+    company_id: str = DEFAULT_COMPANY_ID,
+    limit: int = 200,
+) -> list[dict]:
+    init_storage()
+    with _connect() as connection:
+        rows = connection.execute(
+            select(prediction_events.c.input_json)
+            .where(prediction_events.c.company_id == company_id)
+            .order_by(prediction_events.c.created_at.desc())
+            .limit(limit)
+        ).all()
+
+    inputs = []
+    for row in rows:
+        try:
+            payload = json.loads(row[0] or "{}")
+        except json.JSONDecodeError:
+            payload = {}
+        if payload:
+            inputs.append(payload)
+    return inputs
+
+
 def record_audit_event(
     *,
     username: str,
@@ -616,6 +700,25 @@ def finish_training_run(
         )
 
 
+def update_training_run_status(
+    run_id: int,
+    *,
+    status: str,
+    error_message: str = "",
+) -> None:
+    init_storage()
+    with _connect() as connection:
+        connection.execute(
+            update(model_training_runs)
+            .where(model_training_runs.c.id == run_id)
+            .values(
+                status=status,
+                error_message=error_message,
+                finished_at=_now(),
+            )
+        )
+
+
 def latest_training_status(company_id: str | None = None) -> list[dict]:
     init_storage()
     with _connect() as connection:
@@ -634,6 +737,31 @@ def latest_training_status(company_id: str | None = None) -> list[dict]:
         data["artifact_paths"] = json.loads(data.pop("artifact_paths_json") or "{}")
         statuses.append(data)
     return statuses
+
+
+def latest_candidate_run(company_id: str) -> dict | None:
+    init_storage()
+    with _connect() as connection:
+        row = connection.execute(
+            select(model_training_runs)
+            .where(
+                model_training_runs.c.company_id == company_id,
+                model_training_runs.c.status == "candidate_ready",
+            )
+            .order_by(model_training_runs.c.started_at.desc())
+            .limit(1)
+        ).mappings().first()
+
+    if row is None:
+        return None
+
+    data = dict(row)
+    for key in ("started_at", "finished_at"):
+        if isinstance(data.get(key), datetime):
+            data[key] = data[key].isoformat()
+    data["metrics"] = json.loads(data.pop("metrics_json") or "{}")
+    data["artifact_paths"] = json.loads(data.pop("artifact_paths_json") or "{}")
+    return data
 
 
 def clear_company_data(company_id: str) -> None:

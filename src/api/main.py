@@ -20,8 +20,10 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from io import BytesIO
+import json
 import os
 from pathlib import Path
+import shutil
 
 import pandas as pd
 from fastapi import Body, Depends, FastAPI, File, Header, HTTPException, UploadFile, status
@@ -71,6 +73,7 @@ from src.api.storage import (
     update_learning_row_statuses,
     record_prediction_event,
     record_upload_batch,
+    recent_prediction_inputs,
     storage_backend as product_storage_backend,
     upsert_workspace_member,
     workspace_overview,
@@ -79,16 +82,20 @@ from src.api.storage import (
     record_audit_event,
     get_company_schema,
     latest_training_status,
+    latest_candidate_run,
     clear_company_data,
     save_company_schema,
     start_training_run,
     finish_training_run,
+    update_training_run_status,
+    mark_learning_rows_used_in_model,
 )
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
 ROOT = Path(__file__).resolve().parents[2]
 WEB_DIR = ROOT / "web"
+MODELS_DIR = ROOT / "models"
 FEEDBACK_PATH = (
     Path("/tmp") / "churnguard_company_feedback.csv"
     if os.getenv("VERCEL")
@@ -517,6 +524,265 @@ def _model_label(predictor) -> str:
     return type(predictor.model).__name__
 
 
+def _read_model_meta(path: Path) -> dict | None:
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text())
+    except Exception as exc:
+        logger.warning("Could not read model metadata at %s: %s", path, exc)
+        return None
+
+
+def _company_artifacts(company_id: str, *, candidate: bool = False) -> dict[str, Path]:
+    stem = f"{company_id}_candidate" if candidate else company_id
+    return {
+        "model": MODELS_DIR / f"{stem}_model.joblib",
+        "pipeline": MODELS_DIR / f"{stem}_pipeline.joblib",
+        "metadata": MODELS_DIR / f"{stem}_model_meta.json",
+    }
+
+
+def _candidate_payload(company_id: str) -> dict:
+    production_paths = _company_artifacts(company_id)
+    candidate_paths = _company_artifacts(company_id, candidate=True)
+    candidate_run = latest_candidate_run(company_id)
+    production_meta = _read_model_meta(production_paths["metadata"])
+    candidate_meta = _read_model_meta(candidate_paths["metadata"])
+    can_promote = bool(
+        candidate_run
+        and candidate_meta
+        and all(path.exists() for path in candidate_paths.values())
+    )
+    quality_gate = _model_quality_gate(production_meta, candidate_meta)
+    return {
+        "production": {
+            "exists": production_meta is not None,
+            "metadata": production_meta,
+            "artifacts": {key: str(path) for key, path in production_paths.items()},
+        },
+        "candidate": {
+            "exists": candidate_meta is not None,
+            "metadata": candidate_meta,
+            "artifacts": {key: str(path) for key, path in candidate_paths.items()},
+            "run": candidate_run,
+            "can_promote": can_promote,
+            "quality_gate": quality_gate,
+        },
+    }
+
+
+def _metric(metrics: dict, key: str) -> float | None:
+    value = metrics.get(key)
+    if isinstance(value, (int, float)):
+        return float(value)
+    return None
+
+
+def _quality_score(metrics: dict) -> float | None:
+    roc_auc = _metric(metrics, "roc_auc")
+    pr_auc = _metric(metrics, "pr_auc")
+    f1 = _metric(metrics, "f1")
+    brier = _metric(metrics, "brier")
+    if roc_auc is None and pr_auc is None and f1 is None:
+        return None
+    score = 0.0
+    weight = 0.0
+    if roc_auc is not None:
+        score += 0.45 * roc_auc
+        weight += 0.45
+    if pr_auc is not None:
+        score += 0.25 * pr_auc
+        weight += 0.25
+    if f1 is not None:
+        score += 0.20 * f1
+        weight += 0.20
+    if brier is not None:
+        score += 0.10 * (1 - brier)
+        weight += 0.10
+    return round(score / weight, 6) if weight else None
+
+
+def _model_quality_gate(production_meta: dict | None, candidate_meta: dict | None) -> dict:
+    if not candidate_meta:
+        return {
+            "passed": False,
+            "status": "missing_candidate",
+            "score_delta": None,
+            "blockers": ["No candidate model metadata is available."],
+            "warnings": [],
+        }
+    if not production_meta:
+        return {
+            "passed": True,
+            "status": "no_production_baseline",
+            "score_delta": None,
+            "blockers": [],
+            "warnings": ["No production baseline exists, so this candidate can be promoted as the first model."],
+        }
+
+    production_metrics = production_meta.get("metrics", {}) or {}
+    candidate_metrics = candidate_meta.get("metrics", {}) or {}
+    production_score = _quality_score(production_metrics)
+    candidate_score = _quality_score(candidate_metrics)
+    blockers = []
+    warnings = []
+
+    checks = {
+        "roc_auc": 0.01,
+        "pr_auc": 0.02,
+        "f1": 0.02,
+    }
+    for key, tolerance in checks.items():
+        production_value = _metric(production_metrics, key)
+        candidate_value = _metric(candidate_metrics, key)
+        if production_value is None or candidate_value is None:
+            continue
+        delta = candidate_value - production_value
+        if delta < -tolerance:
+            blockers.append(
+                f"{key} dropped by {abs(delta):.3f}, beyond the allowed {tolerance:.3f} tolerance."
+            )
+        elif delta < 0:
+            warnings.append(f"{key} is slightly lower than production by {abs(delta):.3f}.")
+
+    production_brier = _metric(production_metrics, "brier")
+    candidate_brier = _metric(candidate_metrics, "brier")
+    if production_brier is not None and candidate_brier is not None:
+        delta = candidate_brier - production_brier
+        if delta > 0.02:
+            blockers.append("brier worsened by more than 0.020, which means calibration likely regressed.")
+        elif delta > 0:
+            warnings.append(f"brier is slightly worse than production by {delta:.3f}.")
+
+    score_delta = None
+    if production_score is not None and candidate_score is not None:
+        score_delta = round(candidate_score - production_score, 6)
+        if score_delta < -0.01:
+            blockers.append(
+                f"balanced quality score dropped by {abs(score_delta):.3f}, beyond the allowed 0.010 tolerance."
+            )
+        elif score_delta < 0:
+            warnings.append(f"balanced quality score is slightly lower by {abs(score_delta):.3f}.")
+
+    return {
+        "passed": not blockers,
+        "status": "passed" if not blockers else "blocked",
+        "production_score": production_score,
+        "candidate_score": candidate_score,
+        "score_delta": score_delta,
+        "blockers": blockers,
+        "warnings": warnings,
+    }
+
+
+def _drift_status(score: float) -> str:
+    if score >= 0.75:
+        return "high"
+    if score >= 0.35:
+        return "watch"
+    return "stable"
+
+
+def _numeric_drift(feature: str, baseline: dict, current_values: pd.Series) -> dict | None:
+    values = pd.to_numeric(current_values, errors="coerce").dropna()
+    if values.empty:
+        return None
+    baseline_mean = baseline.get("mean")
+    baseline_std = baseline.get("std") or 0
+    if baseline_mean is None:
+        return None
+    current_mean = float(values.mean())
+    denominator = max(float(baseline_std), 1.0)
+    z_delta = abs(current_mean - float(baseline_mean)) / denominator
+    score = min(z_delta / 3, 1.0)
+    return {
+        "feature": feature,
+        "type": "numeric",
+        "score": round(score, 4),
+        "status": _drift_status(score),
+        "baseline": round(float(baseline_mean), 4),
+        "current": round(current_mean, 4),
+        "detail": f"mean moved {z_delta:.2f} standard deviations",
+    }
+
+
+def _categorical_drift(feature: str, baseline: dict, current_values: pd.Series) -> dict | None:
+    baseline_dist = baseline.get("top_values") or {}
+    if not baseline_dist:
+        return None
+    values = current_values.fillna("Unknown").astype(str)
+    if values.empty:
+        return None
+    current_dist = values.value_counts(normalize=True).to_dict()
+    categories = set(baseline_dist) | set(current_dist)
+    distance = 0.5 * sum(
+        abs(float(current_dist.get(category, 0)) - float(baseline_dist.get(category, 0)))
+        for category in categories
+    )
+    top_current = max(current_dist.items(), key=lambda item: item[1])[0] if current_dist else None
+    top_baseline = max(baseline_dist.items(), key=lambda item: item[1])[0] if baseline_dist else None
+    return {
+        "feature": feature,
+        "type": "categorical",
+        "score": round(float(distance), 4),
+        "status": _drift_status(float(distance)),
+        "baseline": top_baseline,
+        "current": top_current,
+        "detail": "category distribution distance",
+    }
+
+
+def _drift_payload(company_id: str) -> dict:
+    paths = _company_artifacts(company_id)
+    meta = _read_model_meta(paths["metadata"]) or {}
+    profile = meta.get("training_profile") or {}
+    inputs = recent_prediction_inputs(company_id=company_id, limit=200)
+    if not profile:
+        return {
+            "status": "unavailable",
+            "overall_score": None,
+            "sample_size": len(inputs),
+            "retrain_recommended": False,
+            "message": "Training profile is missing. Train a new candidate to enable drift monitoring.",
+            "features": [],
+        }
+    if len(inputs) < 10:
+        return {
+            "status": "warming_up",
+            "overall_score": None,
+            "sample_size": len(inputs),
+            "retrain_recommended": False,
+            "message": "Need at least 10 recent predictions before drift monitoring is reliable.",
+            "features": [],
+        }
+
+    recent_df = pd.DataFrame(inputs)
+    feature_drifts = []
+    for feature, baseline in (profile.get("numeric") or {}).items():
+        if feature in recent_df.columns:
+            drift = _numeric_drift(feature, baseline, recent_df[feature])
+            if drift:
+                feature_drifts.append(drift)
+    for feature, baseline in (profile.get("categorical") or {}).items():
+        if feature in recent_df.columns:
+            drift = _categorical_drift(feature, baseline, recent_df[feature])
+            if drift:
+                feature_drifts.append(drift)
+
+    feature_drifts.sort(key=lambda item: item["score"], reverse=True)
+    top_scores = [item["score"] for item in feature_drifts[:5]]
+    overall = round(float(sum(top_scores) / len(top_scores)), 4) if top_scores else 0.0
+    return {
+        "status": _drift_status(overall),
+        "overall_score": overall,
+        "sample_size": len(inputs),
+        "retrain_recommended": overall >= 0.75,
+        "message": "Drift is estimated from recent prediction inputs compared with the active model training profile.",
+        "features": feature_drifts[:12],
+    }
+
+
 # ── Routes ────────────────────────────────────────────────────────────────────
 
 @app.get("/health", response_model=HealthResponse, tags=["System"])
@@ -685,7 +951,7 @@ def retrain_all_models(session: AuthenticatedUser = Depends(_require_session)) -
         python_bin = sys.executable
         script_path = Path(__file__).resolve().parents[2] / "scripts" / "train_and_save.py"
         try:
-            result = subprocess.run([python_bin, str(script_path), "all"], capture_output=True, text=True)
+            result = subprocess.run([python_bin, str(script_path), "all", "--candidate"], capture_output=True, text=True)
             if result.returncode == 0:
                 finish_training_run(
                     training_run_id,
@@ -714,6 +980,109 @@ def retrain_all_models(session: AuthenticatedUser = Depends(_require_session)) -
 def retrain_status(session: AuthenticatedUser = Depends(_require_session)) -> dict:
     """Return recent model training runs for the active tenant."""
     return {"runs": latest_training_status(session.company_id)}
+
+
+@app.get("/admin/model/candidate", tags=["Admin"])
+def model_candidate_status(session: AuthenticatedUser = Depends(_require_session)) -> dict:
+    """Return production and candidate model metadata for promotion review."""
+    return _candidate_payload(session.company_id)
+
+
+@app.get("/admin/drift", tags=["Admin"])
+def model_drift_status(session: AuthenticatedUser = Depends(_require_session)) -> dict:
+    """Return recent feature-drift estimates for the active tenant."""
+    return _drift_payload(session.company_id)
+
+
+@app.post("/admin/model/promote", tags=["Admin"])
+def promote_model_candidate(
+    request: dict = Body(default_factory=dict),
+    session: AuthenticatedUser = Depends(_require_session),
+) -> dict:
+    """Promote the latest candidate model into production for the active tenant."""
+    if session.role != "owner":
+        raise HTTPException(status_code=403, detail="Only workspace owners can promote models.")
+
+    payload = _candidate_payload(session.company_id)
+    candidate = payload["candidate"]
+    candidate_run = candidate.get("run")
+    if not candidate.get("can_promote") or not candidate_run:
+        raise HTTPException(status_code=404, detail="No promotable candidate model is ready.")
+    quality_gate = candidate.get("quality_gate", {})
+    force = bool(request.get("force"))
+    if quality_gate and not quality_gate.get("passed", False) and not force:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "Candidate model failed promotion quality checks.",
+                "quality_gate": quality_gate,
+            },
+        )
+
+    production_paths = _company_artifacts(session.company_id)
+    candidate_paths = _company_artifacts(session.company_id, candidate=True)
+    MODELS_DIR.mkdir(exist_ok=True)
+
+    for key in ("model", "pipeline", "metadata"):
+        shutil.copy2(candidate_paths[key], production_paths[key])
+
+    update_training_run_status(candidate_run["id"], status="promoted")
+    for path in candidate_paths.values():
+        if path.exists():
+            path.unlink()
+    used_row_count = mark_learning_rows_used_in_model(
+        company_id=session.company_id,
+        row_ids=candidate["metadata"].get("learning_row_ids", []),
+        training_run_id=candidate_run["id"],
+    )
+    router.predictors.pop(session.company_id, None)
+    record_audit_event(
+        username=session.username,
+        event_type="model_candidate_promoted",
+        details=(
+            f"Promoted candidate run {candidate_run['id']} for {session.company_id}; "
+            f"marked {used_row_count} learning rows as used_in_model"
+        ),
+        company_id=session.company_id,
+    )
+    return {
+        "ok": True,
+        "status": "promoted",
+        "run_id": candidate_run["id"],
+        "used_learning_rows": used_row_count,
+        "quality_gate": quality_gate,
+        "forced": force,
+        "candidate": _candidate_payload(session.company_id)["candidate"],
+    }
+
+
+@app.post("/admin/model/reject", tags=["Admin"])
+def reject_model_candidate(session: AuthenticatedUser = Depends(_require_session)) -> dict:
+    """Reject the latest candidate model without touching production artifacts."""
+    if session.role != "owner":
+        raise HTTPException(status_code=403, detail="Only workspace owners can reject models.")
+
+    payload = _candidate_payload(session.company_id)
+    candidate_run = payload["candidate"].get("run")
+    if not candidate_run:
+        raise HTTPException(status_code=404, detail="No candidate model is ready to reject.")
+
+    for path in _company_artifacts(session.company_id, candidate=True).values():
+        if path.exists():
+            path.unlink()
+
+    update_training_run_status(candidate_run["id"], status="rejected")
+    record_audit_event(
+        username=session.username,
+        event_type="model_candidate_rejected",
+        details=f"Rejected candidate run {candidate_run['id']} for {session.company_id}",
+        company_id=session.company_id,
+    )
+    return {
+        "ok": True,
+        "status": "rejected",
+        "run_id": candidate_run["id"],
+    }
 
 
 @app.post("/admin/onboard", response_model=CompanyOnboardResponse, tags=["Admin"])
@@ -881,6 +1250,7 @@ def predict(
             churn_probability=response.churn_probability,
             risk_level=response.risk_level,
             model_version=response.model_version,
+            input_payload=payload,
             company_id=session.company_id,
         )
         record_audit_event(
@@ -916,23 +1286,26 @@ def predict_batch(
             detail="Batch size limited to 100 customers per request.",
         )
     predictions = []
+    prediction_inputs = []
     p = router.get_predictor(session.company_id)
     for customer in request.customers:
         try:
             payload = _prediction_payload(customer, session.company_id)
             result = p.predict(payload)
             predictions.append(_build_response(result))
+            prediction_inputs.append(payload)
         except Exception as exc:
             logger.error("Error on customer %s: %s", customer.get("customerID", "UNKNOWN"), exc)
 
     high_risk = sum(1 for p in predictions if p.risk_level == "High")
-    for prediction in predictions:
+    for prediction, payload in zip(predictions, prediction_inputs):
         record_prediction_event(
             username=session.username,
             customer_id=prediction.customer_id,
             churn_probability=prediction.churn_probability,
             risk_level=prediction.risk_level,
             model_version=prediction.model_version,
+            input_payload=payload,
             company_id=session.company_id,
         )
 
@@ -961,11 +1334,13 @@ async def predict_csv(
     raw, schema = _validate_customer_csv(raw, company_id=session.company_id, require_churn=False, max_rows=SCORING_MAX_ROWS)
 
     rows = []
+    scored_inputs = []
     p = router.get_predictor(session.company_id)
     for index, record in raw.iterrows():
         customer = record.to_dict()
         customer.setdefault("customerID", f"ROW-{index + 1}")
         result = p.predict(customer)
+        scored_inputs.append(customer)
         top_driver = result["top_factors"][0]["feature"] if result["top_factors"] else ""
         rows.append({
             "customerID": str(customer.get("customerID", f"ROW-{index + 1}")),
@@ -986,13 +1361,14 @@ async def predict_csv(
         high_risk_count=high_risk,
         company_id=session.company_id,
     )
-    for row in rows:
+    for row, customer in zip(rows, scored_inputs):
         record_prediction_event(
             username=session.username,
             customer_id=row["customerID"],
             churn_probability=row["churn_probability"],
             risk_level=row["risk_level"],
             model_version="1.0.0",
+            input_payload=customer,
             company_id=session.company_id,
         )
         
