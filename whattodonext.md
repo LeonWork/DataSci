@@ -17,12 +17,16 @@
 15. **Used-In-Model Tracking**: Candidate metadata now records included learning row IDs, and promotion marks those approved rows as `used_in_model` with the promoted training run ID.
 16. **Promotion Quality Rules**: Candidate promotion now compares production vs candidate metrics and blocks material regressions unless an owner explicitly force-promotes.
 17. **Drift Monitoring**: Prediction events now store scored input payloads, model metadata stores training profiles, and `/admin/drift` flags stable/watch/high drift with retrain recommendations.
-18. **100% Test Suite Pass Rate**: All API, pipeline, and integration tests pass locally with SQLite and no Neon/network dependency.
+18. **Promotion History UI**: Added a Training Run Timeline in the Improvement Lab so owners can review candidate, promoted, rejected, failed, and force-promoted model runs with metrics and timestamps.
+19. **Drift Metadata Repair**: Fixed tenant fallback candidate training so fallback artifacts preserve `training_profile`, promoted a fresh default model, and verified `/admin/drift` now reports watch/stable-style drift instead of unavailable.
+20. **What-If Comparison Tool**: Replaced the instructional What-If tab with a working side-by-side scenario builder that captures a baseline profile, generates a retention scenario, scores both profiles, and shows probability delta, changed fields, driver movement, and recommended actions.
+21. **100% Test Suite Pass Rate**: All API, pipeline, and integration tests pass locally with SQLite and no Neon/network dependency.
 
 # What To Do Next
 
-1. **Advanced Model Explanations**: Integrate richer SHAP/LIME-style plots directly in the dashboard.
-2. **Tenant Usage Analytics**: Implement billing, usage limits, and API quota tracking for the multi-tenant SaaS subscription model.
+1. **What-If Scenario Editing**: Let users manually edit Profile B inside the What-If tab instead of only using the generated retention scenario.
+2. **Tenant Usage Analytics**: Implement prediction counts, upload volume, retraining count, usage limits, and API quota tracking for the multi-tenant SaaS subscription model.
 3. **Durable Model Artifact Storage**: Move production/candidate artifacts to Vercel Blob or object storage before serious external pilots.
-4. **Promotion History UI**: Show past candidate, promoted, rejected, failed, and force-promoted training runs in the Improvement Lab.
+4. **Advanced Model Explanations**: Integrate richer SHAP/LIME-style plots directly in the dashboard, especially for What-If driver changes.
 5. **Outcome Performance Drift**: Once companies upload later outcomes, compare predicted risk against actual churn by cohort and time window.
+6. **Retraining History Cleanup**: Add a database migration or admin maintenance task to archive old failed fallback runs from before the clean fallback workflow.

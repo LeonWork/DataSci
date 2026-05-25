@@ -34,6 +34,7 @@ data/external/labeled_churn/*.csv
 # Model artifacts (use MLflow / DVC instead)
 models/*.pkl
 models/*.joblib
+models/*_candidate_model_meta.json
 models/*.h5
 models/*.onnx
 

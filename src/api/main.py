@@ -549,10 +549,11 @@ def _candidate_payload(company_id: str) -> dict:
     candidate_run = latest_candidate_run(company_id)
     production_meta = _read_model_meta(production_paths["metadata"])
     candidate_meta = _read_model_meta(candidate_paths["metadata"])
-    can_promote = bool(
+    candidate_artifacts_exist = all(path.exists() for path in candidate_paths.values())
+    candidate_ready = bool(
         candidate_run
         and candidate_meta
-        and all(path.exists() for path in candidate_paths.values())
+        and candidate_artifacts_exist
     )
     quality_gate = _model_quality_gate(production_meta, candidate_meta)
     return {
@@ -562,11 +563,11 @@ def _candidate_payload(company_id: str) -> dict:
             "artifacts": {key: str(path) for key, path in production_paths.items()},
         },
         "candidate": {
-            "exists": candidate_meta is not None,
-            "metadata": candidate_meta,
+            "exists": candidate_ready,
+            "metadata": candidate_meta if candidate_artifacts_exist else None,
             "artifacts": {key: str(path) for key, path in candidate_paths.items()},
-            "run": candidate_run,
-            "can_promote": can_promote,
+            "run": candidate_run if candidate_ready else None,
+            "can_promote": candidate_ready,
             "quality_gate": quality_gate,
         },
     }
@@ -1023,10 +1024,18 @@ def promote_model_candidate(
     candidate_paths = _company_artifacts(session.company_id, candidate=True)
     MODELS_DIR.mkdir(exist_ok=True)
 
-    for key in ("model", "pipeline", "metadata"):
+    for key in ("model", "pipeline"):
         shutil.copy2(candidate_paths[key], production_paths[key])
 
-    update_training_run_status(candidate_run["id"], status="promoted")
+    promoted_meta = dict(candidate.get("metadata") or {})
+    promoted_meta["artifact_stage"] = "production"
+    promoted_meta["company_id"] = session.company_id
+    production_paths["metadata"].write_text(json.dumps(promoted_meta, indent=2))
+
+    run_metrics = dict(candidate_run.get("metrics") or {})
+    if force:
+        run_metrics["force_promoted"] = True
+    update_training_run_status(candidate_run["id"], status="promoted", metrics=run_metrics)
     for path in candidate_paths.values():
         if path.exists():
             path.unlink()

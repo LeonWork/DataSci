@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>ChurnGuard AI</title>
-    <link rel="stylesheet" href="/styles.css?v=20260518-revamp-v2" />
+    <link rel="stylesheet" href="/styles.css?v=20260525-promotion-history" />
   </head>
   <body>
     <main class="app">
@@ -351,33 +351,37 @@
                 <article class="result-card" style="grid-column: 1 / -1;">
                   <p class="eyebrow">What-If Scenario Builder</p>
                   <h3>Compare two customer profiles side-by-side</h3>
-                  <p class="panel-copy">Fill out the sidebar form with Profile A values, score it, then change values and score again. The results panel shows the delta.</p>
-                  <div class="whatif-instructions">
-                    <div class="whatif-step"><span class="whatif-num">1</span><span>Fill the sidebar form with your <strong>baseline</strong> customer profile.</span></div>
-                    <div class="whatif-step"><span class="whatif-num">2</span><span>Click <strong>"Analyze churn risk"</strong> to score Profile A.</span></div>
-                    <div class="whatif-step"><span class="whatif-num">3</span><span>Change one or more fields (e.g. switch contract type, add a service).</span></div>
-                    <div class="whatif-step"><span class="whatif-num">4</span><span>Score again — the dashboard shows the <strong>before vs after delta</strong>.</span></div>
+                  <p class="panel-copy">Use the current sidebar values as Profile A, generate an improved retention scenario, and compare the model response.</p>
+                  <div class="whatif-actions">
+                    <button id="whatIfUseCurrent" type="button" class="primary">Use current profile</button>
+                    <button id="whatIfGeneratePlan" type="button">Generate retention scenario</button>
+                    <button id="whatIfRunComparison" type="button">Score comparison</button>
+                  </div>
+                  <p id="whatIfMessage" class="message"></p>
+                </article>
+                <article class="result-card">
+                  <p class="eyebrow">Profile A</p>
+                  <h3>Baseline</h3>
+                  <div id="whatIfBaseline" class="whatif-profile">
+                    <p style="color:var(--muted);font-size:14px;">No baseline captured yet.</p>
                   </div>
                 </article>
                 <article class="result-card">
-                  <p class="eyebrow">Tips</p>
-                  <h3>High-impact changes</h3>
-                  <ul class="recommendations">
-                    <li>Contract type is typically the #1 churn driver — try switching between monthly and annual.</li>
-                    <li>Adding support services (backup, security) often reduces risk by 15–30%.</li>
-                    <li>Tenure interacts with everything — short-tenured customers are inherently riskier.</li>
-                    <li>High monthly charges compound risk, especially with month-to-month contracts.</li>
-                  </ul>
+                  <p class="eyebrow">Profile B</p>
+                  <h3>Scenario</h3>
+                  <div id="whatIfScenario" class="whatif-profile">
+                    <p style="color:var(--muted);font-size:14px;">Generate a scenario to compare against Profile A.</p>
+                  </div>
                 </article>
-                <article class="result-card">
-                  <p class="eyebrow">Interpreting Results</p>
-                  <h3>Reading the risk factors</h3>
-                  <ul class="recommendations">
-                    <li><strong>Red bars</strong> = features pushing churn probability <em>up</em>.</li>
-                    <li><strong>Green bars</strong> = features pushing churn probability <em>down</em>.</li>
-                    <li>The wider the bar, the stronger that feature's influence on the prediction.</li>
-                    <li>Click any factor to see a detailed impact breakdown.</li>
-                  </ul>
+                <article class="result-card" style="grid-column: 1 / -1;">
+                  <p class="eyebrow">Comparison</p>
+                  <h3>Probability delta and driver movement</h3>
+                  <div id="whatIfResults" class="whatif-results">
+                    <div class="promotion-empty">
+                      <strong>No comparison yet</strong>
+                      <span>Capture a baseline, generate a scenario, then score the comparison.</span>
+                    </div>
+                  </div>
                 </article>
               </div>
             </div>
@@ -444,6 +448,14 @@
                   <p id="modelPromotionMessage" class="message"></p>
                 </article>
                 <article class="result-card" style="grid-column: 1 / -1;">
+                  <p class="eyebrow">Promotion History</p>
+                  <h3>Training run timeline</h3>
+                  <p class="panel-copy">Track candidate, promoted, rejected, failed, and force-promoted model runs for this workspace.</p>
+                  <div id="promotionHistoryPanel" class="promotion-history">
+                    <p style="color:var(--muted);font-size:14px;">Loading promotion history...</p>
+                  </div>
+                </article>
+                <article class="result-card" style="grid-column: 1 / -1;">
                   <p class="eyebrow">Training Guide</p>
                   <h3>How to improve your model</h3>
                   <div class="lab-training-tips">
@@ -504,6 +516,6 @@
       </section>
     </main>
 
-    <script src="/app.js?v=20260518-lab-v5"></script>
+    <script src="/app.js?v=20260525-promotion-history"></script>
   </body>
 </html>

@@ -999,6 +999,11 @@ select {
   gap: 0.85rem;
 }
 
+.lab-grid > .result-card:nth-child(4) {
+  grid-column: auto;
+  grid-row: auto;
+}
+
 .lab-grid h3 {
   margin: 0 0 0.35rem;
 }
@@ -1264,6 +1269,123 @@ select {
   border-color: #fed7aa;
 }
 
+.promotion-history {
+  display: grid;
+  gap: 0.65rem;
+  margin-top: 0.9rem;
+}
+
+.history-run {
+  display: grid;
+  gap: 0.65rem;
+  padding: 0.85rem;
+  border: 1px solid var(--line);
+  border-left: 4px solid #94a3b8;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.history-run--candidate-ready {
+  border-left-color: var(--cyan);
+}
+
+.history-run--fallback-candidate-ready,
+.history-run--fallback-succeeded {
+  border-left-color: #0f766e;
+}
+
+.history-run--promoted {
+  border-left-color: var(--green);
+}
+
+.history-run--rejected {
+  border-left-color: var(--amber);
+}
+
+.history-run--failed {
+  border-left-color: var(--red);
+}
+
+.history-run--running {
+  border-left-color: #6366f1;
+}
+
+.history-run__main {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.history-run__main > div {
+  display: grid;
+  gap: 0.25rem;
+  min-width: 0;
+}
+
+.history-run__main strong {
+  color: var(--ink);
+  font-size: 0.95rem;
+}
+
+.history-run__main time {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.history-status {
+  width: fit-content;
+  padding: 0.16rem 0.45rem;
+  border-radius: 999px;
+  background: #eef2ff;
+  color: #4338ca;
+  font-size: 0.68rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.history-run__metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.history-run__metrics span {
+  display: inline-grid;
+  gap: 0.08rem;
+  min-width: 74px;
+  padding: 0.45rem 0.55rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f8fafc;
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.history-run__metrics strong {
+  color: var(--ink);
+  font-size: 0.86rem;
+  text-transform: none;
+}
+
+.history-muted {
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+
+.history-error {
+  margin: 0;
+  padding: 0.55rem 0.65rem;
+  border-radius: 8px;
+  background: #fef2f2;
+  color: var(--red);
+  font-size: 0.78rem;
+}
+
 .drift-monitor {
   display: grid;
   gap: 0.8rem;
@@ -1449,6 +1571,178 @@ select {
 .training-tip p { margin: 0; color: var(--muted); font-size: 0.84rem; line-height: 1.45; }
 
 /* ── What-If Instructions ───────────────────────────────────────── */
+.whatif-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin-top: 0.9rem;
+}
+
+.whatif-actions button {
+  width: auto;
+  border-radius: 7px;
+  padding: 0.62rem 0.95rem;
+  font-weight: 800;
+}
+
+.whatif-actions button:not(.primary) {
+  background: #ffffff;
+  border: 1px solid var(--line);
+  color: var(--ink);
+}
+
+.whatif-profile {
+  margin-top: 0.8rem;
+}
+
+.whatif-profile-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem;
+}
+
+.whatif-profile-grid > div {
+  display: grid;
+  gap: 0.18rem;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f8fafc;
+  min-width: 0;
+}
+
+.whatif-profile-grid > div.changed {
+  background: #ecfeff;
+  border-color: #a5f3fc;
+}
+
+.whatif-profile-grid span {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.whatif-profile-grid strong {
+  color: var(--ink);
+  font-size: 0.88rem;
+  overflow-wrap: anywhere;
+}
+
+.whatif-results {
+  display: grid;
+  gap: 0.9rem;
+  margin-top: 0.9rem;
+}
+
+.whatif-score-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.65rem;
+}
+
+.whatif-score-grid > div {
+  display: grid;
+  gap: 0.2rem;
+  padding: 0.9rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.whatif-score-grid span {
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.whatif-score-grid strong {
+  color: var(--ink);
+  font-size: 1.4rem;
+}
+
+.whatif-score-grid em {
+  color: var(--muted);
+  font-style: normal;
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.whatif-score-grid .good strong,
+.whatif-driver-table .good {
+  color: var(--green);
+}
+
+.whatif-score-grid .bad strong,
+.whatif-driver-table .bad {
+  color: var(--red);
+}
+
+.whatif-two-col {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.85rem;
+}
+
+.whatif-two-col h4,
+.whatif-driver-table h4 {
+  margin: 0 0 0.5rem;
+  color: var(--ink);
+  font-size: 0.9rem;
+}
+
+.whatif-change-list {
+  display: grid;
+  gap: 0.45rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.whatif-change-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #ffffff;
+  font-size: 0.82rem;
+}
+
+.whatif-change-list strong {
+  color: var(--ink);
+}
+
+.whatif-change-list span {
+  color: var(--muted);
+  text-align: right;
+}
+
+.whatif-driver-table {
+  overflow-x: auto;
+}
+
+.whatif-driver-table table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.83rem;
+}
+
+.whatif-driver-table th,
+.whatif-driver-table td {
+  padding: 0.55rem 0.6rem;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+}
+
+.whatif-driver-table th {
+  color: var(--muted);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+}
+
 .whatif-instructions {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
@@ -1648,6 +1942,12 @@ th {
   .analysis-grid,
   .detail-grid,
   .lab-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .whatif-score-grid,
+  .whatif-two-col,
+  .whatif-profile-grid {
     grid-template-columns: 1fr;
   }
 

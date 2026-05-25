@@ -705,17 +705,21 @@ def update_training_run_status(
     *,
     status: str,
     error_message: str = "",
+    metrics: dict | None = None,
 ) -> None:
     init_storage()
+    values = {
+        "status": status,
+        "error_message": error_message,
+        "finished_at": _now(),
+    }
+    if metrics is not None:
+        values["metrics_json"] = json.dumps(metrics, default=str, sort_keys=True)
     with _connect() as connection:
         connection.execute(
             update(model_training_runs)
             .where(model_training_runs.c.id == run_id)
-            .values(
-                status=status,
-                error_message=error_message,
-                finished_at=_now(),
-            )
+            .values(**values)
         )
 
 
@@ -746,7 +750,7 @@ def latest_candidate_run(company_id: str) -> dict | None:
             select(model_training_runs)
             .where(
                 model_training_runs.c.company_id == company_id,
-                model_training_runs.c.status == "candidate_ready",
+                model_training_runs.c.status.in_(("candidate_ready", "fallback_candidate_ready")),
             )
             .order_by(model_training_runs.c.started_at.desc())
             .limit(1)

@@ -1,5 +1,8 @@
 {
-  "company_id": "global",
+  "company_id": "default",
+  "artifact_stage": "production",
+  "training_run_id": 41,
+  "learning_row_ids": [],
   "feature_names": [
     "tenure",
     "MonthlyCharges",
@@ -143,28 +146,28 @@
     },
     "XGBoost_Tuned": {
       "metrics": {
-        "roc_auc": 0.847,
-        "pr_auc": 0.6329,
-        "brier": 0.1977,
-        "f1": 0.5836,
-        "accuracy": 0.7065,
-        "precision": 0.4419,
-        "recall": 0.8591
+        "roc_auc": 0.8474,
+        "pr_auc": 0.6333,
+        "brier": 0.1589,
+        "f1": 0.6126,
+        "accuracy": 0.7654,
+        "precision": 0.5066,
+        "recall": 0.7749
       },
-      "balanced_score": 0.736325,
+      "balanced_score": 0.746285,
       "best_params": {
-        "n_estimators": 423,
+        "n_estimators": 433,
         "max_depth": 3,
-        "learning_rate": 0.034000431380307325,
-        "subsample": 0.6379225802736506,
-        "colsample_bytree": 0.8175383014836002,
-        "min_child_weight": 9,
-        "gamma": 4.60277482307206,
-        "reg_alpha": 1.2844489789812394,
-        "reg_lambda": 3.8361814135169587,
-        "scale_pos_weight": 5
+        "learning_rate": 0.06159108817115583,
+        "subsample": 0.706235909685009,
+        "colsample_bytree": 0.8489653124607273,
+        "min_child_weight": 10,
+        "gamma": 4.654754299939975,
+        "reg_alpha": 1.0647542342735528,
+        "reg_lambda": 4.318763124698019,
+        "scale_pos_weight": 3
       },
-      "best_cv_auc": 0.8442468525280992
+      "best_cv_auc": 0.844266202248868
     },
     "LightGBM_Tuned": {
       "metrics": {
@@ -235,5 +238,197 @@
       "accuracy": 0.7998
     }
   ],
-  "selection_metric": "balanced_score"
+  "selection_metric": "balanced_score",
+  "training_profile": {
+    "row_count": 57043,
+    "numeric": {
+      "tenure": {
+        "mean": 35.080658450642495,
+        "std": 21.324871252653892,
+        "missing_rate": 0.0
+      },
+      "MonthlyCharges": {
+        "mean": 58.45912153989096,
+        "std": 26.78144523676946,
+        "missing_rate": 0.0
+      },
+      "TotalCharges": {
+        "mean": 2067.2602445523553,
+        "std": 1705.2689382036756,
+        "missing_rate": 0.0
+      },
+      "clv": {
+        "mean": 2067.591886120996,
+        "std": 1704.7914820983522,
+        "missing_rate": 0.0
+      },
+      "avg_monthly_charge": {
+        "mean": 57.71693856163177,
+        "std": 27.41707508999384,
+        "missing_rate": 0.0
+      },
+      "charge_increase": {
+        "mean": 0.7421829782591869,
+        "std": 7.268299195199731,
+        "missing_rate": 0.0
+      },
+      "contract_stability": {
+        "mean": 0.6920919306488088,
+        "std": 0.8330251743152766,
+        "missing_rate": 0.0
+      },
+      "service_bundle_score": {
+        "mean": 2.9221990428273408,
+        "std": 1.5626210696334466,
+        "missing_rate": 0.0
+      },
+      "has_internet": {
+        "mean": 0.779710043300668,
+        "std": 0.4144421451502471,
+        "missing_rate": 0.0
+      },
+      "is_high_value": {
+        "mean": 0.25000438265869607,
+        "std": 0.4330152321918253,
+        "missing_rate": 0.0
+      }
+    },
+    "categorical": {
+      "gender": {
+        "top_values": {
+          "Male": 0.5018144207001736,
+          "Female": 0.49818557929982643
+        },
+        "missing_rate": 0.0
+      },
+      "SeniorCitizen": {
+        "top_values": {
+          "No": 0.8381396490366916,
+          "Yes": 0.1618603509633084
+        },
+        "missing_rate": 0.0
+      },
+      "Partner": {
+        "top_values": {
+          "No": 0.5195729537366548,
+          "Yes": 0.4804270462633452
+        },
+        "missing_rate": 0.0
+      },
+      "Dependents": {
+        "top_values": {
+          "No": 0.7085882579808215,
+          "Yes": 0.2914117420191785
+        },
+        "missing_rate": 0.0
+      },
+      "PhoneService": {
+        "top_values": {
+          "Yes": 0.9007590764861596,
+          "No": 0.09924092351384044
+        },
+        "missing_rate": 0.0
+      },
+      "MultipleLines": {
+        "top_values": {
+          "No": 0.5141735182230949,
+          "Yes": 0.38658555826306473,
+          "No phone service": 0.09924092351384044
+        },
+        "missing_rate": 0.0
+      },
+      "InternetService": {
+        "top_values": {
+          "Fiber optic": 0.44007152498991986,
+          "DSL": 0.33963851831074804,
+          "No": 0.22028995669933207
+        },
+        "missing_rate": 0.0
+      },
+      "OnlineSecurity": {
+        "top_values": {
+          "No": 0.5471661728871202,
+          "Yes": 0.23254387041354768,
+          "No internet service": 0.22028995669933207
+        },
+        "missing_rate": 0.0
+      },
+      "OnlineBackup": {
+        "top_values": {
+          "No": 0.5051101800396193,
+          "Yes": 0.2745998632610487,
+          "No internet service": 0.22028995669933207
+        },
+        "missing_rate": 0.0
+      },
+      "DeviceProtection": {
+        "top_values": {
+          "No": 0.5072138562137335,
+          "Yes": 0.2724961870869344,
+          "No internet service": 0.22028995669933207
+        },
+        "missing_rate": 0.0
+      },
+      "TechSupport": {
+        "top_values": {
+          "No": 0.5450975579825745,
+          "Yes": 0.23461248531809337,
+          "No internet service": 0.22028995669933207
+        },
+        "missing_rate": 0.0
+      },
+      "StreamingTV": {
+        "top_values": {
+          "No": 0.470469645705871,
+          "Yes": 0.30924039759479693,
+          "No internet service": 0.22028995669933207
+        },
+        "missing_rate": 0.0
+      },
+      "StreamingMovies": {
+        "top_values": {
+          "No": 0.4683484388969725,
+          "Yes": 0.3113616044036955,
+          "No internet service": 0.22028995669933207
+        },
+        "missing_rate": 0.0
+      },
+      "Contract": {
+        "top_values": {
+          "Month-to-month": 0.548323194782883,
+          "Two year": 0.24041512543169188,
+          "One year": 0.21126167978542504
+        },
+        "missing_rate": 0.0
+      },
+      "PaperlessBilling": {
+        "top_values": {
+          "Yes": 0.5942885191872798,
+          "No": 0.40571148081272024
+        },
+        "missing_rate": 0.0
+      },
+      "PaymentMethod": {
+        "top_values": {
+          "Electronic check": 0.3386918640323966,
+          "Mailed check": 0.22914292726539628,
+          "Bank transfer (automatic)": 0.22211314271689778,
+          "Credit card (automatic)": 0.21005206598530932
+        },
+        "missing_rate": 0.0
+      },
+      "tenure_band": {
+        "top_values": {
+          "loyal": 0.3188647160913697,
+          "champion": 0.31879459355223255,
+          "new": 0.18507091141770243,
+          "mid": 0.1647353750679312,
+          "nan": 0.01253440387076416
+        },
+        "missing_rate": 0.0
+      }
+    }
+  },
+  "fallback_from_company_id": "global",
+  "fallback_reason": "no_tenant_training_data"
 }

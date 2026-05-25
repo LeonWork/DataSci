@@ -603,7 +603,9 @@ class TestModelPromotion:
         assert resp.json()["forced"] is True
         assert resp.json()["quality_gate"]["passed"] is False
         assert json.loads((tmp_path / "default_model_meta.json").read_text())["model_family"] == "BusinessOverrideCandidate"
-        assert latest_training_status("default")[0]["status"] == "promoted"
+        latest_run = latest_training_status("default")[0]
+        assert latest_run["status"] == "promoted"
+        assert latest_run["metrics"]["force_promoted"] is True
 
     def test_promote_candidate_marks_included_learning_rows_used(self, client, tmp_path, monkeypatch):
         from src.api.storage import (

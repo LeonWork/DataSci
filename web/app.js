@@ -60,14 +60,28 @@ const schemaEditorMessage = document.querySelector("#schemaEditorMessage");
 const learningReviewSummary = document.querySelector("#learningReviewSummary");
 const learningReviewTable = document.querySelector("#learningReviewTable");
 const modelPromotionPanel = document.querySelector("#modelPromotionPanel");
+const promotionHistoryPanel = document.querySelector("#promotionHistoryPanel");
 const modelPromotionMessage = document.querySelector("#modelPromotionMessage");
 const trainModelCandidate = document.querySelector("#trainModelCandidate");
 const promoteModelCandidate = document.querySelector("#promoteModelCandidate");
 const rejectModelCandidate = document.querySelector("#rejectModelCandidate");
+const whatIfUseCurrent = document.querySelector("#whatIfUseCurrent");
+const whatIfGeneratePlan = document.querySelector("#whatIfGeneratePlan");
+const whatIfRunComparison = document.querySelector("#whatIfRunComparison");
+const whatIfBaseline = document.querySelector("#whatIfBaseline");
+const whatIfScenario = document.querySelector("#whatIfScenario");
+const whatIfResults = document.querySelector("#whatIfResults");
+const whatIfMessage = document.querySelector("#whatIfMessage");
 let lastCustomer = null;
 let lastPrediction = null;
 let lastBatchRows = [];
 let currentSchema = null;
+let whatIfState = {
+  baseline: null,
+  scenario: null,
+  baselinePrediction: null,
+  scenarioPrediction: null,
+};
 
 const highRiskPreset = {
   gender: "Female",
@@ -334,6 +348,169 @@ function customerFromForm() {
     if (field in customer) customer[field] = Number(customer[field]);
   });
   return { customerID: "WEB-USER", ...customer };
+}
+
+function cloneCustomer(customer) {
+  return JSON.parse(JSON.stringify(customer || {}));
+}
+
+function summarizeProfile(customer) {
+  if (!customer) return [];
+  const preferred = [
+    "Contract",
+    "tenure",
+    "MonthlyCharges",
+    "TotalCharges",
+    "InternetService",
+    "TechSupport",
+    "OnlineSecurity",
+    "OnlineBackup",
+    "DeviceProtection",
+    "PaymentMethod",
+    "PaperlessBilling",
+  ].filter((key) => key in customer);
+  const fallback = Object.keys(customer).filter((key) => key !== "customerID").slice(0, 8);
+  const keys = preferred.length ? preferred : fallback;
+  return keys.map((key) => [key, customer[key]]);
+}
+
+function renderProfileSummary(container, customer, changedFrom = null) {
+  if (!container) return;
+  if (!customer) {
+    container.innerHTML = '<p style="color:var(--muted);font-size:14px;">No profile selected.</p>';
+    return;
+  }
+  container.innerHTML = `
+    <div class="whatif-profile-grid">
+      ${summarizeProfile(customer).map(([key, value]) => {
+        const changed = changedFrom && String(changedFrom[key]) !== String(value);
+        return `
+          <div class="${changed ? "changed" : ""}">
+            <span>${key}</span>
+            <strong>${value ?? "--"}</strong>
+          </div>
+        `;
+      }).join("")}
+    </div>
+  `;
+}
+
+function buildRetentionScenario(customer) {
+  const scenario = cloneCustomer(customer);
+  if ("Contract" in scenario && scenario.Contract === "Month-to-month") scenario.Contract = "One year";
+  if ("TechSupport" in scenario && scenario.InternetService !== "No") scenario.TechSupport = "Yes";
+  if ("OnlineSecurity" in scenario && scenario.InternetService !== "No") scenario.OnlineSecurity = "Yes";
+  if ("OnlineBackup" in scenario && scenario.InternetService !== "No") scenario.OnlineBackup = "Yes";
+  if ("DeviceProtection" in scenario && scenario.InternetService !== "No") scenario.DeviceProtection = "Yes";
+  if ("PaperlessBilling" in scenario) scenario.PaperlessBilling = "No";
+  if ("PaymentMethod" in scenario) scenario.PaymentMethod = "Bank transfer (automatic)";
+  if ("tenure" in scenario) scenario.tenure = Math.min(72, Number(scenario.tenure || 0) + 12);
+  if ("MonthlyCharges" in scenario) scenario.MonthlyCharges = Math.max(0, Number((Number(scenario.MonthlyCharges || 0) * 0.9).toFixed(2)));
+  if ("TotalCharges" in scenario && "MonthlyCharges" in scenario && "tenure" in scenario) {
+    scenario.TotalCharges = Number((Number(scenario.MonthlyCharges || 0) * Number(scenario.tenure || 0)).toFixed(2));
+  }
+  scenario.customerID = "WHAT-IF-B";
+  return scenario;
+}
+
+function changedFields(base, scenario) {
+  return Object.keys(scenario || {})
+    .filter((key) => key !== "customerID" && String(base?.[key]) !== String(scenario?.[key]))
+    .map((key) => ({ key, from: base?.[key], to: scenario?.[key] }));
+}
+
+function factorMap(prediction) {
+  const map = new Map();
+  (prediction?.top_factors || []).forEach((item) => map.set(item.feature, item.shap_value));
+  return map;
+}
+
+function renderWhatIfComparison() {
+  if (!whatIfResults) return;
+  const { baseline, scenario, baselinePrediction, scenarioPrediction } = whatIfState;
+  if (!baseline || !scenario || !baselinePrediction || !scenarioPrediction) {
+    whatIfResults.innerHTML = `
+      <div class="promotion-empty">
+        <strong>No comparison yet</strong>
+        <span>Capture a baseline, generate a scenario, then score the comparison.</span>
+      </div>
+    `;
+    return;
+  }
+
+  const baseProb = baselinePrediction.churn_probability * 100;
+  const scenarioProb = scenarioPrediction.churn_probability * 100;
+  const delta = scenarioProb - baseProb;
+  const improved = delta < 0;
+  const changes = changedFields(baseline, scenario);
+  const beforeFactors = factorMap(baselinePrediction);
+  const afterFactors = factorMap(scenarioPrediction);
+  const factorRows = Array.from(new Set([
+    ...(baselinePrediction.top_factors || []).map((item) => item.feature),
+    ...(scenarioPrediction.top_factors || []).map((item) => item.feature),
+  ])).slice(0, 6).map((feature) => {
+    const before = beforeFactors.get(feature) || 0;
+    const after = afterFactors.get(feature) || 0;
+    return { feature, before, after, delta: after - before };
+  });
+
+  whatIfResults.innerHTML = `
+    <div class="whatif-score-grid">
+      <div>
+        <span>Profile A</span>
+        <strong>${baseProb.toFixed(1)}%</strong>
+        <em>${baselinePrediction.risk_level} risk</em>
+      </div>
+      <div>
+        <span>Profile B</span>
+        <strong>${scenarioProb.toFixed(1)}%</strong>
+        <em>${scenarioPrediction.risk_level} risk</em>
+      </div>
+      <div class="${improved ? "good" : "bad"}">
+        <span>Delta</span>
+        <strong>${delta >= 0 ? "+" : ""}${delta.toFixed(1)} pts</strong>
+        <em>${improved ? "Lower churn risk" : "Higher churn risk"}</em>
+      </div>
+    </div>
+    <div class="whatif-two-col">
+      <div>
+        <h4>Changed inputs</h4>
+        ${changes.length ? `
+          <ul class="whatif-change-list">
+            ${changes.map((item) => `<li><strong>${item.key}</strong><span>${item.from ?? "--"} → ${item.to ?? "--"}</span></li>`).join("")}
+          </ul>
+        ` : '<p class="history-muted">No input changes detected.</p>'}
+      </div>
+      <div>
+        <h4>Recommended action</h4>
+        <ul class="recommendations">
+          ${recommendationText(scenario, scenarioPrediction.risk_level).slice(0, 4).map((item) => `<li>${item}</li>`).join("")}
+        </ul>
+      </div>
+    </div>
+    <div class="whatif-driver-table">
+      <h4>Driver movement</h4>
+      <table>
+        <thead><tr><th>Feature</th><th>Profile A</th><th>Profile B</th><th>Move</th></tr></thead>
+        <tbody>
+          ${factorRows.map((row) => `
+            <tr>
+              <td>${row.feature.replaceAll("_", " ")}</td>
+              <td>${row.before.toFixed(4)}</td>
+              <td>${row.after.toFixed(4)}</td>
+              <td class="${row.delta <= 0 ? "good" : "bad"}">${row.delta >= 0 ? "+" : ""}${row.delta.toFixed(4)}</td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function setWhatIfMessage(text, color = "inherit") {
+  if (!whatIfMessage) return;
+  whatIfMessage.textContent = text;
+  whatIfMessage.style.color = color;
 }
 
 function recommendationText(customer, risk) {
@@ -816,6 +993,7 @@ async function loadLabData() {
   loadDriftMonitor();
   loadLearningReview();
   loadModelPromotion();
+  loadPromotionHistory();
 }
 
 async function loadLabSchema() {
@@ -1087,6 +1265,80 @@ function renderQualityGate(gate) {
   `;
 }
 
+function formatRunDate(value) {
+  if (!value) return "In progress";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(date);
+}
+
+function runStatusLabel(status) {
+  return String(status || "unknown").replaceAll("_", " ");
+}
+
+function renderRunMetrics(metrics = {}) {
+  const metricKeys = [
+    ["ROC-AUC", "roc_auc"],
+    ["PR-AUC", "pr_auc"],
+    ["F1", "f1"],
+    ["Brier", "brier"],
+  ];
+  const items = metricKeys.filter(([, key]) => typeof metrics[key] === "number");
+  if (!items.length) return '<span class="history-muted">No metric snapshot</span>';
+  return items.map(([label, key]) => (
+    `<span><strong>${metricValue(metrics, key)}</strong>${label}</span>`
+  )).join("");
+}
+
+async function loadPromotionHistory() {
+  if (!promotionHistoryPanel) return;
+  try {
+    const response = await fetch("/admin/retrain/status", { headers: authHeaders() });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(formatApiError(data.detail, "Could not load promotion history."));
+
+    const runs = data.runs || [];
+    if (!runs.length) {
+      promotionHistoryPanel.innerHTML = `
+        <div class="promotion-empty">
+          <strong>No training runs yet</strong>
+          <span>Train a candidate model to start the promotion timeline.</span>
+        </div>
+      `;
+      return;
+    }
+
+    promotionHistoryPanel.innerHTML = runs.slice(0, 10).map((run) => {
+      const metrics = run.metrics || {};
+      const forced = Boolean(metrics.force_promoted || run.artifact_paths?.force_promoted);
+      const status = forced && run.status === "promoted" ? "force-promoted" : run.status;
+      const statusClass = String(run.status || "unknown").replaceAll("_", "-");
+      return `
+        <div class="history-run history-run--${statusClass}">
+          <div class="history-run__main">
+            <div>
+              <span class="history-status">${runStatusLabel(status)}</span>
+              <strong>Run #${run.id}${run.model_family ? ` · ${run.model_family}` : ""}</strong>
+            </div>
+            <time>${formatRunDate(run.finished_at || run.started_at)}</time>
+          </div>
+          <div class="history-run__metrics">
+            ${renderRunMetrics(metrics)}
+          </div>
+          ${run.error_message ? `<p class="history-error">${run.error_message}</p>` : ""}
+        </div>
+      `;
+    }).join("");
+  } catch (error) {
+    promotionHistoryPanel.innerHTML = `<p style="color:var(--red);font-size:14px;">${error.message}</p>`;
+  }
+}
+
 async function loadModelPromotion() {
   if (!modelPromotionPanel) return;
   try {
@@ -1324,6 +1576,7 @@ document.getElementById("adminRetrainAll")?.addEventListener("click", async () =
       msg.style.color = "var(--green)";
     }
     loadModelPromotion();
+    loadPromotionHistory();
   } catch (error) {
     if (msg) {
       msg.textContent = "❌ " + error.message;
@@ -1352,6 +1605,7 @@ trainModelCandidate?.addEventListener("click", async () => {
       modelPromotionMessage.style.color = "var(--green)";
     }
     await loadModelPromotion();
+    await loadPromotionHistory();
   } catch (error) {
     if (modelPromotionMessage) {
       modelPromotionMessage.textContent = error.message;
@@ -1374,6 +1628,7 @@ promoteModelCandidate?.addEventListener("click", async () => {
     await loadModelInfo();
     await loadLabMetrics();
     await loadModelPromotion();
+    await loadPromotionHistory();
   } catch (error) {
     const gate = error.detail?.quality_gate;
     if (gate && confirm("This candidate failed quality checks. Promote it anyway?")) {
@@ -1386,6 +1641,7 @@ promoteModelCandidate?.addEventListener("click", async () => {
         await loadModelInfo();
         await loadLabMetrics();
         await loadModelPromotion();
+        await loadPromotionHistory();
         return;
       } catch (forcedError) {
         if (modelPromotionMessage) {
@@ -1414,11 +1670,67 @@ rejectModelCandidate?.addEventListener("click", async () => {
       modelPromotionMessage.style.color = "var(--green)";
     }
     await loadModelPromotion();
+    await loadPromotionHistory();
   } catch (error) {
     if (modelPromotionMessage) {
       modelPromotionMessage.textContent = error.message;
       modelPromotionMessage.style.color = "var(--red)";
     }
+  }
+});
+
+whatIfUseCurrent?.addEventListener("click", () => {
+  whatIfState.baseline = cloneCustomer(customerFromForm());
+  whatIfState.baseline.customerID = "WHAT-IF-A";
+  whatIfState.baselinePrediction = null;
+  whatIfState.scenarioPrediction = null;
+  renderProfileSummary(whatIfBaseline, whatIfState.baseline);
+  renderWhatIfComparison();
+  setWhatIfMessage("Profile A captured from the sidebar.", "var(--green)");
+});
+
+whatIfGeneratePlan?.addEventListener("click", () => {
+  if (!whatIfState.baseline) {
+    whatIfState.baseline = cloneCustomer(customerFromForm());
+    whatIfState.baseline.customerID = "WHAT-IF-A";
+    renderProfileSummary(whatIfBaseline, whatIfState.baseline);
+  }
+  whatIfState.scenario = buildRetentionScenario(whatIfState.baseline);
+  whatIfState.baselinePrediction = null;
+  whatIfState.scenarioPrediction = null;
+  renderProfileSummary(whatIfScenario, whatIfState.scenario, whatIfState.baseline);
+  renderWhatIfComparison();
+  const changes = changedFields(whatIfState.baseline, whatIfState.scenario).length;
+  setWhatIfMessage(`${changes} scenario change${changes === 1 ? "" : "s"} generated.`, "var(--green)");
+});
+
+whatIfRunComparison?.addEventListener("click", async () => {
+  if (!whatIfState.baseline) {
+    whatIfState.baseline = cloneCustomer(customerFromForm());
+    whatIfState.baseline.customerID = "WHAT-IF-A";
+    renderProfileSummary(whatIfBaseline, whatIfState.baseline);
+  }
+  if (!whatIfState.scenario) {
+    whatIfState.scenario = buildRetentionScenario(whatIfState.baseline);
+    renderProfileSummary(whatIfScenario, whatIfState.scenario, whatIfState.baseline);
+  }
+  setWhatIfMessage("Scoring both profiles...");
+  if (whatIfRunComparison) whatIfRunComparison.disabled = true;
+  try {
+    const [baselinePrediction, scenarioPrediction] = await Promise.all([
+      postJson("/predict", whatIfState.baseline),
+      postJson("/predict", whatIfState.scenario),
+    ]);
+    whatIfState.baselinePrediction = baselinePrediction;
+    whatIfState.scenarioPrediction = scenarioPrediction;
+    renderWhatIfComparison();
+    await loadAdminSummary();
+    await loadDriftMonitor();
+    setWhatIfMessage("Comparison scored.", "var(--green)");
+  } catch (error) {
+    setWhatIfMessage(error.message, "var(--red)");
+  } finally {
+    if (whatIfRunComparison) whatIfRunComparison.disabled = false;
   }
 });
 

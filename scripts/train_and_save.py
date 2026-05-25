@@ -44,6 +44,7 @@ from src.api.storage import (
     get_company_schema,
     init_storage,
     companies,
+    ensure_company,
     start_training_run,
     finish_training_run,
 )
@@ -81,6 +82,10 @@ EXTERNAL_COLUMN_MAP = {
     "Churn Value": "Churn",
 }
 NUMERIC_DETECTION_THRESHOLD = 0.9
+
+
+class NoTrainingDataError(ValueError):
+    """Raised when a tenant has no usable rows to train its own model."""
 
 
 def _is_numeric_like(series: pd.Series) -> bool:
@@ -264,6 +269,9 @@ def load_training_data(company_id: str = "global") -> pd.DataFrame:
     except Exception as e:
         logger.warning("Could not fetch database learning rows: %s", e)
 
+    if not datasets:
+        raise NoTrainingDataError(f"No training data available for {company_id}")
+
     logger.info("Training sources: %s", ", ".join(name for name, _ in datasets))
     result = pd.concat([df for _, df in datasets], ignore_index=True)
     result.attrs["learning_row_ids"] = learning_row_ids
@@ -322,7 +330,54 @@ def _artifact_paths(company_id: str, *, candidate: bool) -> tuple[Path, Path, Pa
     )
 
 
+def _copy_global_fallback(company_id: str, *, candidate: bool, run_id: int) -> dict:
+    import shutil
+
+    source_stem = "global_candidate" if candidate else "global"
+    source_model = MODELS_DIR / f"{source_stem}_model.joblib"
+    source_pipeline = MODELS_DIR / f"{source_stem}_pipeline.joblib"
+    source_meta = MODELS_DIR / f"{source_stem}_model_meta.json"
+
+    missing = [str(path) for path in (source_model, source_pipeline, source_meta) if not path.exists()]
+    if missing:
+        raise FileNotFoundError(
+            "Global fallback artifacts are missing. Train the global model first: "
+            + ", ".join(missing)
+        )
+
+    model_path, pipeline_path, meta_path = _artifact_paths(company_id, candidate=candidate)
+    shutil.copy2(source_model, model_path)
+    shutil.copy2(source_pipeline, pipeline_path)
+
+    meta = json.loads(source_meta.read_text())
+    meta.update({
+        "company_id": company_id,
+        "artifact_stage": "candidate" if candidate else "production",
+        "training_run_id": run_id,
+        "fallback_from_company_id": "global",
+        "fallback_reason": "no_tenant_training_data",
+        "learning_row_ids": [],
+    })
+    meta_path.write_text(json.dumps(meta, indent=2))
+
+    paths = {
+        "model": str(model_path),
+        "pipeline": str(pipeline_path),
+        "metadata": str(meta_path),
+    }
+    finish_training_run(
+        run_id,
+        status="fallback_candidate_ready" if candidate else "fallback_succeeded",
+        model_family=meta.get("model_family", "global_fallback"),
+        metrics=meta.get("metrics", {}),
+        artifact_paths=paths,
+    )
+    logger.info("No tenant data found — copied %s fallback artifacts for %s", source_stem, company_id)
+    return meta
+
+
 def train_for_company(company_id: str, *, candidate: bool = False) -> dict:
+    ensure_company(company_id, "Global Baseline" if company_id == "global" else None)
     run_id = start_training_run(company_id, status="running")
     logger.info("Loading raw data for %s …", company_id)
     try:
@@ -459,6 +514,8 @@ def train_for_company(company_id: str, *, candidate: bool = False) -> dict:
             logger.info("  %-12s %.4f", k, v)
         logger.info("\nRun the web app:  uvicorn src.api.main:app --reload --port 8000")
         return meta
+    except NoTrainingDataError:
+        return _copy_global_fallback(company_id, candidate=candidate, run_id=run_id)
     except Exception as exc:
         finish_training_run(run_id, status="failed", error_message=str(exc))
         raise
@@ -481,40 +538,11 @@ def main() -> None:
             logger.warning("Could not fetch companies: %s", e)
         
         logger.info("Found %d companies in database. Training all...", len(companies_list))
+        logger.info("--- Training global fallback source ---")
+        train_for_company("global", candidate=candidate)
         for comp_id in companies_list:
             logger.info("--- Training for %s ---", comp_id)
-            try:
-                train_for_company(comp_id, candidate=candidate)
-            except ValueError as e:
-                if "No objects to concatenate" in str(e):
-                    # No training data for this company — copy global model as fallback
-                    import shutil
-                    fallback_paths = {}
-                    for suffix in ["_model.joblib", "_pipeline.joblib", "_model_meta.json"]:
-                        src = MODELS_DIR / f"global{suffix}"
-                        if candidate:
-                            dst = MODELS_DIR / f"{comp_id}_candidate{suffix}"
-                        else:
-                            dst = MODELS_DIR / f"{comp_id}{suffix}"
-                        if src.exists():
-                            shutil.copy2(src, dst)
-                            key = "metadata" if suffix == "_model_meta.json" else suffix.strip("_").replace(".joblib", "")
-                            fallback_paths[key] = str(dst)
-                    fallback_run_id = start_training_run(comp_id, status="running")
-                    fallback_meta = {}
-                    global_meta = MODELS_DIR / "global_model_meta.json"
-                    if global_meta.exists():
-                        fallback_meta = json.loads(global_meta.read_text())
-                    finish_training_run(
-                        fallback_run_id,
-                        status="candidate_ready" if candidate else "succeeded",
-                        model_family=fallback_meta.get("model_family", "global_fallback"),
-                        metrics=fallback_meta.get("metrics", {}),
-                        artifact_paths=fallback_paths,
-                    )
-                    logger.info("No tenant data found — copied global model for %s", comp_id)
-                else:
-                    raise
+            train_for_company(comp_id, candidate=candidate)
     else:
         train_for_company(cid, candidate=candidate)
 
